@@ -54,6 +54,8 @@ services:
       dockerfile: examples/http_server/integration-test/Dockerfile.server
     ports:
       - "8080:8080"
+    environment:
+      - ROUTING_MODE=pulsive
     depends_on:
       backend1:
         condition: service_healthy

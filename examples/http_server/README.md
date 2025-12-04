@@ -266,21 +266,164 @@ http_server/
 | `regex` | Safe URL rewriting |
 | `moka` | In-memory LRU cache |
 | `ron` | Configuration parsing |
-| `pulsive-core` | Reactive entity tracking |
+| `pulsive-core` | Reactive entity/event system |
+| `pulsive-db` | Persistence (available for stats) |
 
 ## Pulsive Integration
 
-This example demonstrates pulsive-core's reactive patterns:
+This example demonstrates pulsive-core's reactive patterns applied to a real HTTP server:
 
-- **Entities**: Track server stats, backend health
-- **Events**: Request received, cache hit/miss, rate limited
-- **Model**: Server configuration and runtime state
+### Routing Modes
 
-The server uses pulsive's entity system to track:
-- Total requests served
-- Cache hit/miss ratios
-- Rate limiting events
-- Backend health status
+The server supports three routing modes, selectable via `ROUTING_MODE` environment variable:
+
+| Mode | Env Value | Description |
+|------|-----------|-------------|
+| **Imperative** | `imperative` (default) | Traditional Router with compiled locations |
+| **Pulsive** | `pulsive` | Routes as entities, model queries for matching |
+| **Pulsive Expr** | `pulsive_expr` | Uses pulsive's expression engine for conditions |
+
+```bash
+# Run with pulsive routing for benchmarking
+ROUTING_MODE=pulsive cargo run -p http_server
+
+# Run with expression-based routing
+ROUTING_MODE=pulsive_expr cargo run -p http_server
+```
+
+### Entities
+
+| Entity Type | Purpose |
+|-------------|---------|
+| `http_server` | Server-wide statistics (1 instance) |
+| `backend` | Backend server state (1 per upstream server) |
+| `route` | Route configuration and hit counters (1 per location) |
+
+### Events
+
+| Event | When Fired | Effect |
+|-------|------------|--------|
+| `request_received` | Every incoming request | Increments `total_requests` |
+| `cache_hit` | Response served from cache | Increments `cache_hits` |
+| `cache_miss` | Cache lookup failed | Increments `cache_misses` |
+| `rate_limited` | Request rejected by rate limiter | Increments `rate_limited` |
+| `proxy_request` | Request forwarded to upstream | Increments `proxy_requests` |
+| `proxy_error` | Upstream request failed | Increments `proxy_errors` |
+| `static_served` | Static file served | Increments `static_served` |
+| `route_matched` | Route matched (pulsive modes) | Logs debug message |
+
+### Pulsive-Based Routing
+
+Routes are stored as entities in the pulsive model:
+
+```rust
+// Route entity properties
+entity.set("path", "/api");
+entity.set("is_regex", false);
+entity.set("priority", 100);
+entity.set("proxy_pass", "backend");
+entity.set("hits", 0);        // Updated on each match
+entity.set("expr_hits", 0);   // Updated in pulsive_expr mode
+```
+
+The `route_with_expr` mode uses pulsive's expression engine:
+
+```rust
+// Build condition: path_len >= prefix_len
+let condition = Expr::Ge(
+    Box::new(Expr::Literal(Value::Int(path_len))),
+    Box::new(Expr::Literal(Value::Int(prefix_len))),
+);
+
+// Evaluate using pulsive
+let result = condition.eval(&mut ctx);
+```
+
+### Event Handlers
+
+Event handlers are registered at startup to reactively update entity properties:
+
+```rust
+// Example: Increment total_requests on request_received
+runtime.on_event(EventHandler {
+    event_id: DefId::new("request_received"),
+    condition: None,
+    effects: vec![Effect::ModifyProperty {
+        property: "total_requests".to_string(),
+        op: ModifyOp::Add,
+        value: Expr::Literal(Value::Int(1)),
+    }],
+    priority: 0,
+});
+```
+
+### Tick Handlers
+
+A background task calls `runtime.tick()` every 10 seconds, triggering:
+- Stats aggregation
+- Route hit statistics (in pulsive modes)
+- Periodic logging
+
+```
+[stats] mode=Pulsive requests=150 cache_hits=45 cache_misses=105 rate_limited=3 proxy=50 static=97
+  [route] path=/api hits=50 expr_hits=0
+  [route] path=/static hits=97 expr_hits=0
+```
+
+### Architecture with Pulsive
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     HTTP Request                            │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Pulsive Runtime                            │
+│   emit_event("request_received") → EventHandler → Model    │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Route Matching                           │
+│   (Imperative | Pulsive Model Query | Pulsive Expr)        │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Request Processing                          │
+│        (Rate Limit → Cache → Serve/Proxy)                  │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│              emit_event("cache_hit" | "static_served" | …)  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Performance Comparison
+
+Run benchmarks with different routing modes:
+
+```bash
+# Benchmark imperative routing (baseline)
+ROUTING_MODE=imperative hey -n 10000 -c 100 http://localhost:8080/
+
+# Benchmark pulsive routing
+ROUTING_MODE=pulsive hey -n 10000 -c 100 http://localhost:8080/
+
+# Benchmark expression-based routing
+ROUTING_MODE=pulsive_expr hey -n 10000 -c 100 http://localhost:8080/
+```
+
+### Why Use Pulsive Here?
+
+1. **Reactive Stats**: Stats are entity properties updated by event handlers
+2. **Route Entities**: Routes as data, enabling runtime modification
+3. **Expression Engine**: Demonstrates pulsive's Expr for condition evaluation
+4. **Benchmarkable**: Compare imperative vs reactive routing performance
+5. **Extensibility**: Add new events/handlers without modifying core logic
+6. **Future-Ready**: Easy to add persistence with `pulsive-db`
 
 ## License
 

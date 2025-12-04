@@ -7,6 +7,7 @@ description = "Static HTTP server with load balancing demonstrating pulsive"
 
 [dependencies]
 pulsive-core = { workspace = true }
+pulsive-db = { workspace = true }
 serde = { workspace = true }
 ron = { workspace = true }
 

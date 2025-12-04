@@ -5,12 +5,14 @@
 //! - Entity tracking for upstreams and connections
 //! - Tick-based health checks
 //! - In-memory caching and rate limiting
+//! - Pulsive-based routing with expression evaluation
 
 #![allow(dead_code)]
 
 pub mod cache;
 pub mod config;
 pub mod proxy;
+pub mod pulsive_router;
 pub mod rate_limit;
 pub mod router;
 pub mod static_files;
