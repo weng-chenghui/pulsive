@@ -93,10 +93,10 @@ fn main() {
 
 | Crate | Description |
 |-------|-------------|
-| [pulsive-core](https://github.com/nicweng/pulsive/tree/main/crates/pulsive-core) | Core types, expression engine, Elm-style runtime |
-| [pulsive-db](https://github.com/nicweng/pulsive/tree/main/crates/pulsive-db) | Database layer using native_db |
-| [pulsive-script](https://github.com/nicweng/pulsive/tree/main/crates/pulsive-script) | RON script loader and schema definitions |
-| [pulsive-godot](https://github.com/nicweng/pulsive/tree/main/crates/pulsive-godot) | Godot 4 GDExtension bindings |
+| [pulsive-core](https://github.com/weng-chenghui/pulsive/tree/main/crates/pulsive-core) | Core types, expression engine, Elm-style runtime |
+| [pulsive-db](https://github.com/weng-chenghui/pulsive/tree/main/crates/pulsive-db) | Database layer using native_db |
+| [pulsive-script](https://github.com/weng-chenghui/pulsive/tree/main/crates/pulsive-script) | RON script loader and schema definitions |
+| [pulsive-godot](https://github.com/weng-chenghui/pulsive/tree/main/crates/pulsive-godot) | Godot 4 GDExtension bindings |
 
 ## Examples
 
@@ -134,4 +134,4 @@ Licensed under either of Apache License, Version 2.0 or MIT license at your opti
 
 ---
 
-[View on GitHub](https://github.com/nicweng/pulsive) | [Report Issues](https://github.com/nicweng/pulsive/issues)
+[View on GitHub](https://github.com/weng-chenghui/pulsive) | [Report Issues](https://github.com/weng-chenghui/pulsive/issues)

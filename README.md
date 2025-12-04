@@ -2,7 +2,7 @@
 
 A reactive programming engine for Rust, inspired by the Elm architecture. Designed for data-driven simulations with dynamic content loaded from scripts.
 
-> **🤖 AI-Generated Project**: This project was almost entirely implemented by an AI agent (Claude). The motivation is to demonstrate how effectively an AI can use Rust to implement well-known software patterns while maintaining performance and correctness. [Learn more →](https://nicweng.github.io/pulsive/)
+> **🤖 AI-Generated Project**: This project was almost entirely implemented by an AI agent (Claude). The motivation is to demonstrate how effectively an AI can use Rust to implement well-known software patterns while maintaining performance and correctness. [Learn more →](https://weng-chenghui.github.io/pulsive/)
 
 ## Use Cases
 
