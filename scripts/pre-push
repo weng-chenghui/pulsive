@@ -1,0 +1,46 @@
+#!/bin/bash
+# Git pre-push hook for pulsive
+# Runs the same checks as CI before allowing a push
+
+set -e
+
+echo "🚀 Running pre-push checks..."
+echo ""
+
+# Get the directory where the script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Navigate to repo root (two levels up from .git/hooks)
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+cd "$REPO_ROOT"
+
+# Set same environment as CI
+export CARGO_TERM_COLOR=always
+export RUSTFLAGS="-Dwarnings"
+export RUSTDOCFLAGS="-Dwarnings"
+
+EXCLUDE="--exclude pulsive-godot"
+
+echo "📝 Checking formatting..."
+cargo fmt --all -- --check
+echo ""
+
+echo "🔍 Running clippy..."
+cargo clippy --workspace $EXCLUDE -- -D warnings
+echo ""
+
+echo "🔨 Building..."
+cargo build --workspace $EXCLUDE
+echo ""
+
+echo "🧪 Running tests..."
+cargo test --workspace $EXCLUDE
+echo ""
+
+echo "📚 Building documentation..."
+cargo doc --workspace $EXCLUDE --no-deps
+echo ""
+
+echo "✅ All pre-push checks passed!"
+echo ""
+

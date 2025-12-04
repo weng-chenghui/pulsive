@@ -188,7 +188,9 @@ fn run_game(
                             // Exit game
                             return Ok(());
                         }
-                        KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('c')
+                            if key_event.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             return Ok(());
                         }
                         KeyCode::Char(c) => {
@@ -218,7 +220,8 @@ fn run_game(
 
                 // Check for timeout
                 let round_entity = model.entities.get(round_id).unwrap();
-                let time_remaining = round_entity.get_number("time_remaining_ms").unwrap_or(0.0) as i64;
+                let time_remaining =
+                    round_entity.get_number("time_remaining_ms").unwrap_or(0.0) as i64;
                 if time_remaining <= 0 {
                     let msg = Msg::event("round_timeout", EntityRef::Entity(round_id), 0);
                     runtime.send(msg);
@@ -231,20 +234,35 @@ fn run_game(
 
             // Check for round end
             let round_entity = model.entities.get(round_id).unwrap();
-            let completed = round_entity.get("completed").and_then(|v| v.as_bool()).unwrap_or(false);
-            let failed = round_entity.get("failed").and_then(|v| v.as_bool()).unwrap_or(false);
+            let completed = round_entity
+                .get("completed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let failed = round_entity
+                .get("failed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             if completed || failed {
                 // Update global score
                 let round_score = round_entity.get_number("round_score").unwrap_or(0.0) as i64;
-                let total = model.get_global("total_score").and_then(|v| v.as_int()).unwrap_or(0);
+                let total = model
+                    .get_global("total_score")
+                    .and_then(|v| v.as_int())
+                    .unwrap_or(0);
                 model.set_global("total_score", total + round_score);
 
-                let rounds = model.get_global("rounds_played").and_then(|v| v.as_int()).unwrap_or(0);
+                let rounds = model
+                    .get_global("rounds_played")
+                    .and_then(|v| v.as_int())
+                    .unwrap_or(0);
                 model.set_global("rounds_played", rounds + 1);
 
                 if completed {
-                    let completed_count = model.get_global("rounds_completed").and_then(|v| v.as_int()).unwrap_or(0);
+                    let completed_count = model
+                        .get_global("rounds_completed")
+                        .and_then(|v| v.as_int())
+                        .unwrap_or(0);
                     model.set_global("rounds_completed", completed_count + 1);
                 }
 
@@ -369,7 +387,10 @@ fn render_game_state(
     let typed_index = round.get_number("typed_index").unwrap_or(0.0) as usize;
     let round_score = round.get_number("round_score").unwrap_or(0.0) as i64;
     let time_remaining = round.get_number("time_remaining_ms").unwrap_or(0.0) as i64;
-    let total_score = model.get_global("total_score").and_then(|v| v.as_int()).unwrap_or(0);
+    let total_score = model
+        .get_global("total_score")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
 
     execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
 
@@ -385,7 +406,7 @@ fn render_game_state(
 
     // Time bar
     let time_secs = time_remaining as f64 / 1000.0;
-    let progress = (time_remaining as f64 / ROUND_DURATION_MS as f64).max(0.0).min(1.0);
+    let progress = (time_remaining as f64 / ROUND_DURATION_MS as f64).clamp(0.0, 1.0);
     let bar_width = 40;
     let filled = (progress * bar_width as f64) as usize;
     let empty = bar_width - filled;
@@ -529,7 +550,11 @@ fn render_round_result(
     execute!(
         stdout,
         Print(format!("    Sentence: \"{}\"\n\n", sentence)),
-        Print(format!("    Characters typed: {}/{}\n", typed_index, sentence.len())),
+        Print(format!(
+            "    Characters typed: {}/{}\n",
+            typed_index,
+            sentence.len()
+        )),
         Print(format!("    Round score: {}\n", round_score)),
         Print("\n\n    Press any key to continue...\n")
     )?;
@@ -542,9 +567,18 @@ fn render_final_results(
     stdout: &mut std::io::Stdout,
     model: &Model,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let total_score = model.get_global("total_score").and_then(|v| v.as_int()).unwrap_or(0);
-    let rounds_played = model.get_global("rounds_played").and_then(|v| v.as_int()).unwrap_or(0);
-    let rounds_completed = model.get_global("rounds_completed").and_then(|v| v.as_int()).unwrap_or(0);
+    let total_score = model
+        .get_global("total_score")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    let rounds_played = model
+        .get_global("rounds_played")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
+    let rounds_completed = model
+        .get_global("rounds_completed")
+        .and_then(|v| v.as_int())
+        .unwrap_or(0);
 
     execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
 
@@ -572,7 +606,10 @@ fn render_final_results(
     // Calculate accuracy
     if rounds_played > 0 {
         let accuracy = (rounds_completed as f64 / rounds_played as f64 * 100.0) as i64;
-        execute!(stdout, Print(format!("    Completion Rate:  {}%\n", accuracy)))?;
+        execute!(
+            stdout,
+            Print(format!("    Completion Rate:  {}%\n", accuracy))
+        )?;
     }
 
     // Rating
@@ -600,4 +637,3 @@ fn render_final_results(
     stdout.flush()?;
     Ok(())
 }
-

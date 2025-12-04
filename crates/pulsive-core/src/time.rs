@@ -13,9 +13,10 @@ use std::fmt;
 pub type Tick = u64;
 
 /// Processing speed settings
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Speed {
     /// System is paused
+    #[default]
     Paused,
     /// Slowest speed
     VerySlow,
@@ -46,12 +47,6 @@ impl Speed {
     /// Check if the system is paused
     pub fn is_paused(&self) -> bool {
         matches!(self, Speed::Paused)
-    }
-}
-
-impl Default for Speed {
-    fn default() -> Self {
-        Speed::Paused
     }
 }
 

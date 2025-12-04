@@ -95,10 +95,7 @@ impl RateLimiter {
         let mut buckets = self.buckets.write().await;
 
         let bucket = buckets.entry(ip).or_insert_with(|| {
-            TokenBucket::new(
-                self.config.requests as f64,
-                self.config.refill_rate(),
-            )
+            TokenBucket::new(self.config.requests as f64, self.config.refill_rate())
         });
 
         if bucket.try_consume() {
@@ -118,9 +115,9 @@ impl RateLimiter {
     pub async fn check_with_config(&self, ip: IpAddr, config: &RateLimitConfig) -> RateLimitResult {
         let mut buckets = self.buckets.write().await;
 
-        let bucket = buckets.entry(ip).or_insert_with(|| {
-            TokenBucket::new(config.requests as f64, config.refill_rate())
-        });
+        let bucket = buckets
+            .entry(ip)
+            .or_insert_with(|| TokenBucket::new(config.requests as f64, config.refill_rate()));
 
         if bucket.try_consume() {
             RateLimitResult::Allowed {
@@ -141,9 +138,7 @@ impl RateLimiter {
         let now = Instant::now();
         let max_age = Duration::from_secs(300); // 5 minutes
 
-        buckets.retain(|_, bucket| {
-            now.duration_since(bucket.last_update) < max_age
-        });
+        buckets.retain(|_, bucket| now.duration_since(bucket.last_update) < max_age);
     }
 
     /// Start background cleanup task
@@ -171,15 +166,9 @@ impl RateLimiter {
 #[derive(Debug, Clone)]
 pub enum RateLimitResult {
     /// Request is allowed
-    Allowed {
-        remaining: u32,
-        limit: u32,
-    },
+    Allowed { remaining: u32, limit: u32 },
     /// Request is rate limited
-    Limited {
-        retry_after: Duration,
-        limit: u32,
-    },
+    Limited { retry_after: Duration, limit: u32 },
 }
 
 impl RateLimitResult {

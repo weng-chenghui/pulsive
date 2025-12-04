@@ -51,10 +51,7 @@ impl ModifyOp {
 pub enum Effect {
     // === Property Modification ===
     /// Set a property on the target entity
-    SetProperty {
-        property: String,
-        value: Expr,
-    },
+    SetProperty { property: String, value: Expr },
     /// Modify a numeric property on the target entity
     ModifyProperty {
         property: String,
@@ -75,10 +72,7 @@ pub enum Effect {
         value: Expr,
     },
     /// Set a global property
-    SetGlobal {
-        property: String,
-        value: Expr,
-    },
+    SetGlobal { property: String, value: Expr },
     /// Modify a global numeric property
     ModifyGlobal {
         property: String,
@@ -92,15 +86,9 @@ pub enum Effect {
     /// Remove a flag from the target entity
     RemoveFlag(DefId),
     /// Add a flag to a specific entity
-    AddEntityFlag {
-        target: EntityRef,
-        flag: DefId,
-    },
+    AddEntityFlag { target: EntityRef, flag: DefId },
     /// Remove a flag from a specific entity
-    RemoveEntityFlag {
-        target: EntityRef,
-        flag: DefId,
-    },
+    RemoveEntityFlag { target: EntityRef, flag: DefId },
 
     // === Entity Lifecycle ===
     /// Spawn a new entity
@@ -150,10 +138,7 @@ pub enum Effect {
 
     // === Output ===
     /// Log a message (for debugging)
-    Log {
-        level: LogLevel,
-        message: Expr,
-    },
+    Log { level: LogLevel, message: Expr },
     /// Send a notification to the UI
     Notify {
         kind: DefId,
@@ -300,10 +285,15 @@ mod tests {
         matches!(effect, Effect::SetProperty { .. });
 
         let effect = Effect::add("gold", Expr::lit(50.0));
-        matches!(effect, Effect::ModifyProperty { op: ModifyOp::Add, .. });
+        matches!(
+            effect,
+            Effect::ModifyProperty {
+                op: ModifyOp::Add,
+                ..
+            }
+        );
 
         let effect = Effect::flag("at_war");
         matches!(effect, Effect::AddFlag(_));
     }
 }
-

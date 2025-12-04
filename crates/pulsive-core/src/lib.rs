@@ -15,31 +15,44 @@
 //! - `Context` - Session/state for an actor
 //! - `Clock` - Simulation time with tick-based progression
 //! - `Speed` - Processing rate control
+//!
+//! ## Journal Feature
+//!
+//! Enable the `journal` feature for recording, replay, and auditing:
+//! ```toml
+//! pulsive-core = { version = "0.1", features = ["journal"] }
+//! ```
 
-mod value;
-mod identity;
-mod expr;
+mod actor;
+mod cmd;
 pub mod effect;
-pub mod time;
-mod rng;
 mod entity;
+mod error;
+mod expr;
+mod identity;
 mod model;
 mod msg;
-mod cmd;
-mod actor;
+mod rng;
 pub mod runtime;
-mod error;
+pub mod time;
+mod value;
 
-pub use value::{Value, ValueMap};
-pub use identity::{EntityId, DefId};
-pub use expr::{Expr, EvalContext};
-pub use effect::{Effect, ModifyOp, EffectResult};
-pub use time::{Clock, Tick, Speed, Timestamp};
-pub use rng::GameRng;
-pub use entity::{Entity, EntityStore, EntityRef};
+#[cfg(feature = "journal")]
+pub mod journal;
+
+pub use actor::{ActorId, Command, Context};
+pub use cmd::Cmd;
+pub use effect::{Effect, EffectResult, ModifyOp};
+pub use entity::{Entity, EntityRef, EntityStore};
+pub use error::{Error, Result};
+pub use expr::{EvalContext, Expr};
+pub use identity::{DefId, EntityId};
 pub use model::Model;
 pub use msg::{Msg, MsgKind};
-pub use cmd::Cmd;
-pub use actor::{ActorId, Command, Context};
-pub use runtime::{Runtime, UpdateResult, EventHandler, TickHandler};
-pub use error::{Error, Result};
+pub use rng::GameRng;
+pub use runtime::{EventHandler, Runtime, TickHandler, UpdateResult};
+pub use time::{Clock, Speed, Tick, Timestamp};
+pub use value::{Value, ValueMap};
+
+#[cfg(feature = "journal")]
+pub use journal::{Journal, JournalConfig, JournalEntry, JournalStats, Snapshot, SnapshotId};

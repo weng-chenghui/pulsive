@@ -1,8 +1,7 @@
 //! Database models for persistent storage.
 
-mod entity;
 mod definition;
+mod entity;
 
-pub use entity::*;
 pub use definition::*;
-
+pub use entity::*;

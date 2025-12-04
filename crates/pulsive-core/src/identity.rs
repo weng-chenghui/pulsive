@@ -26,7 +26,7 @@ impl fmt::Display for EntityId {
 }
 
 /// Identifier for a definition (type, event, resource, etc.) loaded from scripts
-/// 
+///
 /// Uses a string-based ID for easy reference from RON scripts
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -80,4 +80,3 @@ mod tests {
         assert_eq!(format!("{}", id), "gold");
     }
 }
-

@@ -1,6 +1,6 @@
 //! System model (state)
 
-use crate::{EntityStore, GameRng, Clock, ActorId, Context, ValueMap};
+use crate::{ActorId, Clock, Context, EntityStore, GameRng, ValueMap};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
@@ -93,7 +93,7 @@ mod tests {
     fn test_model_globals() {
         let mut model = Model::new();
         model.set_global("difficulty", 2i64);
-        
+
         assert_eq!(model.get_global("difficulty"), Some(&Value::Int(2)));
     }
 
@@ -102,7 +102,7 @@ mod tests {
         let mut model = Model::new();
         let actor = Context::new(ActorId::new(1));
         model.add_actor(actor);
-        
+
         assert!(model.get_actor(ActorId::new(1)).is_some());
         assert!(model.get_actor(ActorId::new(2)).is_none());
     }

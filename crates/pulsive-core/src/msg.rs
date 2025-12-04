@@ -1,6 +1,6 @@
 //! Message types for the reactive system
 
-use crate::{DefId, EntityRef, ActorId, ValueMap};
+use crate::{ActorId, DefId, EntityRef, ValueMap};
 use serde::{Deserialize, Serialize};
 
 /// The kind of message
@@ -143,9 +143,9 @@ mod tests {
 
     #[test]
     fn test_msg_event() {
-        let msg = Msg::event("peasant_uprising", EntityRef::Global, 10)
-            .with_param("severity", 5i64);
-        
+        let msg =
+            Msg::event("peasant_uprising", EntityRef::Global, 10).with_param("severity", 5i64);
+
         assert_eq!(msg.kind, MsgKind::Event);
         assert_eq!(msg.event_id, Some(DefId::new("peasant_uprising")));
         assert!(msg.params.contains_key("severity"));

@@ -5,10 +5,10 @@
 //! - Runtime entity instances
 //! - Event definitions and triggers
 
-mod store;
+mod error;
 mod models;
 mod queries;
-mod error;
+mod store;
 
-pub use store::Store;
 pub use error::{Error, Result};
+pub use store::Store;

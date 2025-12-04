@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// Reference to an entity or a special target
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum EntityRef {
     /// No target
+    #[default]
     None,
     /// Reference to a specific entity by ID
     Entity(EntityId),
@@ -30,12 +31,6 @@ impl EntityRef {
             EntityRef::Entity(id) => Some(*id),
             _ => None,
         }
-    }
-}
-
-impl Default for EntityRef {
-    fn default() -> Self {
-        EntityRef::None
     }
 }
 
@@ -140,10 +135,7 @@ impl EntityStore {
         let kind = kind.into();
 
         // Add to kind index
-        self.by_kind
-            .entry(kind.clone())
-            .or_insert_with(Vec::new)
-            .push(id);
+        self.by_kind.entry(kind.clone()).or_default().push(id);
 
         // Create and store entity
         let entity = Entity::new(id, kind);

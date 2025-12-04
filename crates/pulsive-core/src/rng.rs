@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A deterministic random number generator
-/// 
+///
 /// Uses xorshift64 for simplicity and reproducibility.
 /// Never use std::random or other non-deterministic sources in game logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn test_range() {
         let mut rng = GameRng::new(42);
-        
+
         for _ in 0..100 {
             let f = rng.next_f64();
             assert!(f >= 0.0 && f < 1.0);
@@ -154,14 +154,14 @@ mod tests {
     fn test_weighted_index() {
         let mut rng = GameRng::new(42);
         let weights = [1.0, 2.0, 3.0]; // 1/6, 2/6, 3/6 probability
-        
+
         let mut counts = [0; 3];
         for _ in 0..6000 {
             if let Some(i) = rng.weighted_index(&weights) {
                 counts[i] += 1;
             }
         }
-        
+
         // Rough check that weighting works (index 2 should have ~3x index 0)
         assert!(counts[2] > counts[0] * 2);
     }
@@ -172,12 +172,12 @@ mod tests {
         let original = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let mut shuffled = original.clone();
         rng.shuffle(&mut shuffled);
-        
+
         // Should still contain same elements
         let mut sorted = shuffled.clone();
         sorted.sort();
         assert_eq!(sorted, original);
-        
+
         // Should be different order (very unlikely to be same with 10 elements)
         assert_ne!(shuffled, original);
     }

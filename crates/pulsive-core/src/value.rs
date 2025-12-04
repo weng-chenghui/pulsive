@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// A dynamic value that can represent any game data
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum Value {
     /// No value / null
+    #[default]
     Null,
     /// Boolean value
     Bool(bool),
@@ -27,7 +28,7 @@ pub enum Value {
 }
 
 /// A map of string keys to dynamic values
-/// 
+///
 /// Uses IndexMap to preserve insertion order (useful for deterministic serialization)
 pub type ValueMap = IndexMap<String, Value>;
 
@@ -120,12 +121,6 @@ impl Value {
             Value::List(list) => !list.is_empty(),
             Value::Map(map) => !map.is_empty(),
         }
-    }
-}
-
-impl Default for Value {
-    fn default() -> Self {
-        Value::Null
     }
 }
 

@@ -30,17 +30,19 @@ impl StoredEntity {
             id: entity.id.raw(),
             kind: entity.kind.as_str().to_string(),
             properties,
-            flags: entity.flags.iter().map(|f| f.as_str().to_string()).collect(),
+            flags: entity
+                .flags
+                .iter()
+                .map(|f| f.as_str().to_string())
+                .collect(),
         }
     }
 
     /// Convert to a pulsive Entity.
     pub fn to_entity(&self) -> pulsive_core::Entity {
         let properties: ValueMap = bincode::deserialize(&self.properties).unwrap_or_default();
-        let mut entity = pulsive_core::Entity::new(
-            EntityId::new(self.id),
-            DefId::new(self.kind.clone()),
-        );
+        let mut entity =
+            pulsive_core::Entity::new(EntityId::new(self.id), DefId::new(self.kind.clone()));
         entity.properties = properties;
         entity.flags = self.flags.iter().map(|f| DefId::new(f.clone())).collect();
         entity
@@ -122,8 +124,8 @@ impl StoredClock {
 
     /// Convert to Clock.
     pub fn to_clock(&self) -> pulsive_core::Clock {
-        use pulsive_core::{Speed, Clock};
         use pulsive_core::time::Timestamp;
+        use pulsive_core::{Clock, Speed};
         let speed = match self.speed {
             0 => Speed::Paused,
             1 => Speed::VerySlow,
@@ -136,11 +138,7 @@ impl StoredClock {
             tick: self.tick,
             speed,
             ticks_per_day: self.ticks_per_day,
-            start_date: Timestamp::new(
-                self.start_year,
-                self.start_month,
-                self.start_day,
-            ),
+            start_date: Timestamp::new(self.start_year, self.start_month, self.start_day),
         }
     }
 }

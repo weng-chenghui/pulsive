@@ -137,4 +137,3 @@ mod tests {
         assert_eq!(event.weight, 1.0);
     }
 }
-

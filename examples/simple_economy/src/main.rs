@@ -61,26 +61,24 @@ fn main() {
     runtime.on_event(EventHandler {
         event_id: DefId::new("bonus_gold"),
         condition: None,
-        effects: vec![
-            Effect::ModifyProperty {
-                property: "gold".to_string(),
-                op: ModifyOp::Add,
-                value: Expr::param("amount"),
-            },
-        ],
+        effects: vec![Effect::ModifyProperty {
+            property: "gold".to_string(),
+            op: ModifyOp::Add,
+            value: Expr::param("amount"),
+        }],
         priority: 0,
     });
 
     // Simulate 5 ticks
     println!("Running simulation for 5 ticks...\n");
-    
+
     for _ in 0..5 {
         let _result = runtime.tick(&mut model);
-        
+
         let date = model.time.current_date();
         let france = model.entities.get(france_id).unwrap();
         let england = model.entities.get(england_id).unwrap();
-        
+
         println!(
             "Tick {} ({}): France: {:.1} gold, England: {:.1} gold",
             model.time.tick,
@@ -91,17 +89,14 @@ fn main() {
     }
 
     println!("\nSending bonus_gold event to France...\n");
-    
+
     // Send a bonus gold event
-    let msg = pulsive_core::Msg::event(
-        "bonus_gold",
-        EntityRef::Entity(france_id),
-        model.time.tick,
-    ).with_param("amount", 50.0f64);
-    
+    let msg = pulsive_core::Msg::event("bonus_gold", EntityRef::Entity(france_id), model.time.tick)
+        .with_param("amount", 50.0f64);
+
     runtime.send(msg);
     runtime.process_queue(&mut model);
-    
+
     let france = model.entities.get(france_id).unwrap();
     println!(
         "After bonus: France now has {:.1} gold",
@@ -110,14 +105,14 @@ fn main() {
 
     // Continue simulation
     println!("\nContinuing for 3 more ticks...\n");
-    
+
     for _ in 0..3 {
         runtime.tick(&mut model);
-        
+
         let date = model.time.current_date();
         let france = model.entities.get(france_id).unwrap();
         let england = model.entities.get(england_id).unwrap();
-        
+
         println!(
             "Tick {} ({}): France: {:.1} gold, England: {:.1} gold",
             model.time.tick,

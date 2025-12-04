@@ -73,14 +73,14 @@ impl PulsiveRouter {
         // Create route entities from config
         for (idx, loc) in server_config.locations.iter().enumerate() {
             let entity = model.entities.create("route");
-            
+
             // Store route properties in the entity
             entity.set("path", Value::String(loc.path.clone()));
             entity.set("is_regex", Value::Bool(loc.path.starts_with("~")));
             entity.set("priority", Value::Int((1000 - idx) as i64)); // Earlier = higher priority
             entity.set("hits", Value::Int(0));
             entity.set("expr_hits", Value::Int(0));
-            
+
             if let Some(ref root) = loc.root {
                 entity.set("root", Value::String(root.clone()));
             }
@@ -97,12 +97,12 @@ impl PulsiveRouter {
                 entity.set("rewrite", Value::String(rewrite.clone()));
             }
             entity.set("autoindex", Value::Bool(loc.autoindex));
-            
+
             if let Some(ref index) = loc.index {
                 let index_str = index.join(",");
                 entity.set("index", Value::String(index_str));
             }
-            
+
             if let Some(ref rl) = loc.rate_limit {
                 entity.set("rate_limit_requests", Value::Int(rl.requests as i64));
                 entity.set("rate_limit_per_secs", Value::Int(rl.per_secs as i64));
@@ -136,13 +136,11 @@ impl PulsiveRouter {
         }
 
         // Sort routes: non-regex by path length (longest first), then regex, then by priority
-        routes.sort_by(|a, b| {
-            match (a.is_regex, b.is_regex) {
-                (false, true) => std::cmp::Ordering::Less,
-                (true, false) => std::cmp::Ordering::Greater,
-                (false, false) => b.path.len().cmp(&a.path.len()),
-                (true, true) => b.priority.cmp(&a.priority),
-            }
+        routes.sort_by(|a, b| match (a.is_regex, b.is_regex) {
+            (false, true) => std::cmp::Ordering::Less,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, false) => b.path.len().cmp(&a.path.len()),
+            (true, true) => b.priority.cmp(&a.priority),
         });
 
         Ok(Self {
@@ -154,7 +152,7 @@ impl PulsiveRouter {
     }
 
     /// Route a request using pulsive entities
-    /// 
+    ///
     /// This demonstrates querying the pulsive model for routing decisions.
     /// The model is used to:
     /// 1. Track route hit counts (updated via events)
@@ -203,7 +201,11 @@ impl PulsiveRouter {
     }
 
     /// Check if a route matches the given path
-    fn matches_route(&self, route: &PulsiveRoute, path: &str) -> Option<(Vec<String>, Option<String>)> {
+    fn matches_route(
+        &self,
+        route: &PulsiveRoute,
+        path: &str,
+    ) -> Option<(Vec<String>, Option<String>)> {
         if route.is_regex {
             if let Some(ref regex) = route.regex {
                 if let Some(caps) = regex.captures(path) {
@@ -212,7 +214,7 @@ impl PulsiveRouter {
                         .skip(1)
                         .filter_map(|m| m.map(|m| m.as_str().to_string()))
                         .collect();
-                    
+
                     let rewritten = route.rewrite.as_ref().map(|rewrite| {
                         let mut result = rewrite.clone();
                         for (i, cap) in captures.iter().enumerate() {
@@ -220,7 +222,7 @@ impl PulsiveRouter {
                         }
                         result
                     });
-                    
+
                     return Some((captures, rewritten));
                 }
             }
@@ -234,10 +236,10 @@ impl PulsiveRouter {
     }
 
     /// Route using pulsive's expression engine (demonstration)
-    /// 
+    ///
     /// This method shows how routing conditions could be expressed using
     /// pulsive's Expr system, allowing for dynamic, data-driven routing rules.
-    /// 
+    ///
     /// Since pulsive's Expr doesn't have string matching operations (like StartsWith),
     /// we store path_len comparison in entity properties and use Expr for the evaluation.
     pub fn route_with_expr(&self, model: &mut Model, path: &str) -> Option<PulsiveRouteMatch> {
@@ -261,13 +263,9 @@ impl PulsiveRouter {
                     // For prefix match: path must be at least as long as prefix
                     // and must actually start with the prefix (checked outside Expr)
                     let prefix_len = route.path.len() as i64;
-                    
-                    // For prefix match: check path length and prefix
-                    // Using Expr::Ge demonstrates the expression engine, though
-                    // for this simple case it's overkill - shows the pattern
-                    let prefix_len = route.path.len() as i64;
-                    
+
                     // Create condition using pulsive Expr
+                    // Using Expr::Ge demonstrates the expression engine
                     let condition = Expr::Ge(
                         Box::new(Expr::Literal(Value::Int(path_len))),
                         Box::new(Expr::Literal(Value::Int(prefix_len))),
@@ -276,17 +274,13 @@ impl PulsiveRouter {
                     // Create context for evaluation
                     let empty_params = pulsive_core::ValueMap::new();
                     let mut rng = pulsive_core::GameRng::new(0);
-                    let mut ctx = EvalContext::new(
-                        &model.entities,
-                        &model.globals,
-                        &empty_params,
-                        &mut rng,
-                    );
+                    let mut ctx =
+                        EvalContext::new(&model.entities, &model.globals, &empty_params, &mut rng);
                     ctx.target = Some(entity);
-                    
+
                     // Evaluate condition using pulsive's expression engine
                     let len_ok = matches!(condition.eval(&mut ctx), Ok(Value::Bool(true)));
-                    
+
                     // Also check actual prefix match (Expr doesn't have string ops)
                     len_ok && path.starts_with(&route.path)
                 };
@@ -353,12 +347,15 @@ impl PulsiveRouter {
         self.routes
             .iter()
             .filter_map(|route| {
-                model.entities.get(route.entity_id).map(|entity| RouteStats {
-                    path: route.path.clone(),
-                    hits: entity.get_number("hits").unwrap_or(0.0) as u64,
-                    expr_hits: entity.get_number("expr_hits").unwrap_or(0.0) as u64,
-                    last_hit_tick: entity.get_number("last_hit_tick").map(|v| v as u64),
-                })
+                model
+                    .entities
+                    .get(route.entity_id)
+                    .map(|entity| RouteStats {
+                        path: route.path.clone(),
+                        hits: entity.get_number("hits").unwrap_or(0.0) as u64,
+                        expr_hits: entity.get_number("expr_hits").unwrap_or(0.0) as u64,
+                        last_hit_tick: entity.get_number("last_hit_tick").map(|v| v as u64),
+                    })
             })
             .collect()
     }

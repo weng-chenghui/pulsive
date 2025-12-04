@@ -35,21 +35,23 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
+use proxy::LoadBalancerManager;
 use pulsive_core::{
     effect::{Effect, ModifyOp},
     runtime::{EventHandler, TickHandler},
     DefId, EntityId, EntityRef, Expr, Model, Msg, Runtime, Value,
 };
 use pulsive_router::PulsiveRouter;
-use proxy::LoadBalancerManager;
 use rate_limit::{RateLimitConfig, RateLimitResult, RateLimiter};
 use router::Router;
-use static_files::{error_response, generate_autoindex, redirect_response, serve_file, FileResponse};
+use static_files::{
+    error_response, generate_autoindex, redirect_response, serve_file, FileResponse,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 
 /// Routing mode for benchmarking
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -410,7 +412,11 @@ async fn handle_request(
                 return_url: r.location.return_url.clone(),
                 autoindex: r.location.autoindex,
                 rewritten_path: r.rewritten_path,
-                rate_limit: r.location.rate_limit.as_ref().map(|rl| (rl.requests, rl.per_secs)),
+                rate_limit: r
+                    .location
+                    .rate_limit
+                    .as_ref()
+                    .map(|rl| (rl.requests, rl.per_secs)),
             })
         }
         RoutingMode::Pulsive => {
@@ -462,7 +468,7 @@ async fn handle_request(
     };
 
     // Check rate limit
-    if let Some((requests, per_secs)) = route.rate_limit {
+    if let Some((_requests, _per_secs)) = route.rate_limit {
         if let Some(limiter) = state.rate_limiters.get(&route.path) {
             let result = limiter.check(remote_addr.ip()).await;
             if !result.is_allowed() {
@@ -470,18 +476,15 @@ async fn handle_request(
                 state.emit_event("rate_limited").await;
 
                 if let RateLimitResult::Limited { retry_after, limit } = result {
-                    let mut response = error_response(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        "Rate limit exceeded",
-                    );
+                    let mut response =
+                        error_response(StatusCode::TOO_MANY_REQUESTS, "Rate limit exceeded");
                     response.headers_mut().insert(
                         "Retry-After",
                         retry_after.as_secs().to_string().parse().unwrap(),
                     );
-                    response.headers_mut().insert(
-                        "X-RateLimit-Limit",
-                        limit.to_string().parse().unwrap(),
-                    );
+                    response
+                        .headers_mut()
+                        .insert("X-RateLimit-Limit", limit.to_string().parse().unwrap());
                     return Ok(response);
                 }
             }
@@ -518,7 +521,10 @@ async fn handle_request(
             };
 
             // Proxy the request
-            match lb.proxy_request(method.as_str(), effective_path, headers, body).await {
+            match lb
+                .proxy_request(method.as_str(), effective_path, headers, body)
+                .await
+            {
                 Ok(proxy_resp) => {
                     let mut builder = Response::builder().status(proxy_resp.status);
                     for (key, value) in proxy_resp.headers {
@@ -552,12 +558,17 @@ async fn handle_request(
     // Handle static files
     if let Some(ref root) = route.root {
         // Strip the location prefix from the path to get relative path
-        let relative_path = if !route.path.starts_with("~") && effective_path.starts_with(&route.path) {
-            let stripped = &effective_path[route.path.len()..];
-            if stripped.is_empty() { "/" } else { stripped }
-        } else {
-            effective_path
-        };
+        let relative_path =
+            if !route.path.starts_with("~") && effective_path.starts_with(&route.path) {
+                let stripped = &effective_path[route.path.len()..];
+                if stripped.is_empty() {
+                    "/"
+                } else {
+                    stripped
+                }
+            } else {
+                effective_path
+            };
 
         // Check cache first
         let cache_key = ResponseCache::make_key(relative_path, query.as_deref());
@@ -565,7 +576,7 @@ async fn handle_request(
             // Emit cache_hit event
             state.emit_event("cache_hit").await;
 
-                            let mut response = Response::builder()
+            let mut response = Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", &cached.content_type)
                 .header("X-Cache", "HIT")
@@ -606,27 +617,31 @@ async fn handle_request(
                         )),
                     }
                 } else {
-                    Ok(error_response(StatusCode::FORBIDDEN, "Directory listing not allowed"))
+                    Ok(error_response(
+                        StatusCode::FORBIDDEN,
+                        "Directory listing not allowed",
+                    ))
                 }
             }
             FileResponse::NotFound => {
                 // Check for custom error page
-                let default_root = state.pulsive_routers.first()
+                let default_root = state
+                    .pulsive_routers
+                    .first()
                     .map(|r| r.default_root().to_string())
                     .unwrap_or_else(|| "./www".to_string());
-                
+
                 // Try to serve 404 page
-                if let FileResponse::Found(resp) = serve_file(&default_root, "/404.html", &[]).await {
-                            return Ok(Response::builder()
-                                .status(StatusCode::NOT_FOUND)
+                if let FileResponse::Found(resp) = serve_file(&default_root, "/404.html", &[]).await
+                {
+                    return Ok(Response::builder()
+                        .status(StatusCode::NOT_FOUND)
                         .body(resp.into_body())
-                                .unwrap());
+                        .unwrap());
                 }
                 Ok(error_response(StatusCode::NOT_FOUND, "File not found"))
             }
-            FileResponse::Error(e) => {
-                Ok(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e))
-            }
+            FileResponse::Error(e) => Ok(error_response(StatusCode::INTERNAL_SERVER_ERROR, &e)),
         }
     } else {
         Ok(error_response(StatusCode::NOT_FOUND, "No root configured"))
@@ -665,7 +680,7 @@ fn is_hop_by_hop_header(name: &str) -> bool {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Determine routing mode
     let routing_mode = RoutingMode::from_env();
-    
+
     // Load configuration
     let config_path = std::env::args()
         .nth(1)
@@ -777,7 +792,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  - In-memory response caching");
     println!("  - Per-IP rate limiting");
     if !config.upstreams.is_empty() {
-        println!("  - Load balancing ({} upstream pools)", config.upstreams.len());
+        println!(
+            "  - Load balancing ({} upstream pools)",
+            config.upstreams.len()
+        );
         for upstream in &config.upstreams {
             println!(
                 "    - {}: {} backends ({:?})",

@@ -1,9 +1,9 @@
 //! Schema definitions for RON scripts
 
-pub mod resource;
-pub mod event;
 pub mod entity;
+pub mod event;
+pub mod resource;
 
-pub use resource::ResourceDef;
-pub use event::EventDef;
 pub use entity::EntityTypeDef;
+pub use event::EventDef;
+pub use resource::ResourceDef;

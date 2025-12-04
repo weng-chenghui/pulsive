@@ -19,6 +19,6 @@ pub mod static_files;
 
 pub use cache::{CacheStats, CachedResponse, ResponseCache};
 pub use config::{CacheConfig, Config, LoadBalanceMethod};
-pub use proxy::{LoadBalancer, LoadBalancerManager, ProxyError, ProxyResponse, BackendStats};
+pub use proxy::{BackendStats, LoadBalancer, LoadBalancerManager, ProxyError, ProxyResponse};
 pub use rate_limit::{RateLimitResult, RateLimiter, RateLimiterStats};
 pub use router::{RouteMatch, Router};

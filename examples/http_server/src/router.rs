@@ -39,13 +39,11 @@ impl Router {
         }
 
         // Sort locations: non-regex first (by path length desc), then regex
-        locations.sort_by(|a, b| {
-            match (a.is_regex, b.is_regex) {
-                (false, true) => std::cmp::Ordering::Less,
-                (true, false) => std::cmp::Ordering::Greater,
-                (false, false) => b.config.path.len().cmp(&a.config.path.len()),
-                (true, true) => std::cmp::Ordering::Equal,
-            }
+        locations.sort_by(|a, b| match (a.is_regex, b.is_regex) {
+            (false, true) => std::cmp::Ordering::Less,
+            (true, false) => std::cmp::Ordering::Greater,
+            (false, false) => b.config.path.len().cmp(&a.config.path.len()),
+            (true, true) => std::cmp::Ordering::Equal,
         });
 
         Ok(Self {
@@ -61,9 +59,15 @@ impl Router {
                 let rewritten_path = location.apply_rewrite(path, &captures);
 
                 // Determine effective root and index
-                let root = location.config.root.clone()
+                let root = location
+                    .config
+                    .root
+                    .clone()
                     .or_else(|| Some(self.server_config.root.clone()));
-                let index = location.config.index.clone()
+                let index = location
+                    .config
+                    .index
+                    .clone()
                     .unwrap_or_else(|| self.server_config.index.clone());
 
                 return Some(RouteMatch {

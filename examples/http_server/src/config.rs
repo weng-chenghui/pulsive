@@ -270,10 +270,10 @@ impl CompiledLocation {
 impl Config {
     /// Load configuration from a RON file
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
-        let content = fs::read_to_string(path.as_ref())
-            .map_err(|e| ConfigError::Io(e.to_string()))?;
-        let config: Config = ron::from_str(&content)
-            .map_err(|e| ConfigError::Parse(e.to_string()))?;
+        let content =
+            fs::read_to_string(path.as_ref()).map_err(|e| ConfigError::Io(e.to_string()))?;
+        let config: Config =
+            ron::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?;
         Ok(config)
     }
 
@@ -322,7 +322,8 @@ mod tests {
             cache_ttl_secs: None,
             rate_limit: None,
             add_headers: HashMap::new(),
-        }).unwrap();
+        })
+        .unwrap();
 
         assert!(loc.matches("/api/users").is_some());
         assert!(loc.matches("/api").is_some());
@@ -344,7 +345,8 @@ mod tests {
             cache_ttl_secs: None,
             rate_limit: None,
             add_headers: HashMap::new(),
-        }).unwrap();
+        })
+        .unwrap();
 
         let captures = loc.matches("/user/123").unwrap();
         assert_eq!(captures, vec!["123"]);

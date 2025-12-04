@@ -41,7 +41,9 @@ impl Store {
     /// Get scheduled events for a specific tick.
     pub fn scheduled_events_for_tick(&self, tick: u64) -> Result<Vec<StoredScheduledEvent>> {
         let r = self.db.r_transaction()?;
-        let scan = r.scan().secondary::<StoredScheduledEvent>(StoredScheduledEventKey::trigger_tick)?;
+        let scan = r
+            .scan()
+            .secondary::<StoredScheduledEvent>(StoredScheduledEventKey::trigger_tick)?;
         let iter = scan.start_with(tick)?;
         let events: std::result::Result<Vec<StoredScheduledEvent>, _> = iter.collect();
         events.map_err(|e| Error::Database(e.to_string()))

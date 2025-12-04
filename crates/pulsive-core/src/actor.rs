@@ -45,7 +45,7 @@ impl fmt::Display for ActorId {
 }
 
 /// A command submitted by an actor for processing
-/// 
+///
 /// Commands are validated actions that modify system state.
 /// In single-actor mode: validated locally
 /// In multi-actor mode: sent to coordinator for validation
@@ -65,11 +65,7 @@ pub struct Command {
 
 impl Command {
     /// Create a new command
-    pub fn new(
-        actor_id: ActorId,
-        action: impl Into<DefId>,
-        target: EntityRef,
-    ) -> Self {
+    pub fn new(actor_id: ActorId, action: impl Into<DefId>, target: EntityRef) -> Self {
         Self {
             actor_id,
             action: action.into(),
@@ -170,4 +166,3 @@ mod tests {
         assert!(ctx.controls(entity));
     }
 }
-

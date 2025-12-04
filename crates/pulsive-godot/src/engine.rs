@@ -1,17 +1,12 @@
 //! Main engine class for Godot integration
 
 use godot::prelude::*;
-use pulsive_core::{
-    DefId, EntityRef, Speed, Model, Msg,
-    ActorId, Runtime, UpdateResult,
-};
+use pulsive_core::{ActorId, DefId, EntityRef, Model, Msg, Runtime, Speed, UpdateResult};
 use pulsive_db::Store;
 use pulsive_script::{GameDefs, Loader};
 use std::path::PathBuf;
 
-use crate::bridge::{
-    dict_to_value_map, value_map_to_dict, value_to_variant, variant_to_value,
-};
+use crate::bridge::{dict_to_value_map, value_map_to_dict, value_to_variant, variant_to_value};
 
 /// The main Pulsive engine exposed to Godot
 #[derive(GodotClass)]
@@ -82,7 +77,8 @@ impl PulsiveEngine {
                     return false;
                 }
                 self.defs = loader.finish();
-                godot_print!("Loaded {} resources, {} events, {} entity types",
+                godot_print!(
+                    "Loaded {} resources, {} events, {} entity types",
                     self.defs.resources.len(),
                     self.defs.events.len(),
                     self.defs.entity_types.len()
@@ -175,7 +171,9 @@ impl PulsiveEngine {
     #[func]
     fn entities_by_kind(&self, kind: GString) -> PackedInt64Array {
         let def_id = DefId::new(kind.to_string());
-        let ids: Vec<i64> = self.model.entities
+        let ids: Vec<i64> = self
+            .model
+            .entities
             .by_kind(&def_id)
             .map(|e| e.id.raw() as i64)
             .collect();
@@ -196,7 +194,8 @@ impl PulsiveEngine {
     /// Set a global property
     #[func]
     fn set_global(&mut self, property: GString, value: Variant) {
-        self.model.set_global(property.to_string(), variant_to_value(&value));
+        self.model
+            .set_global(property.to_string(), variant_to_value(&value));
     }
 
     // === Time Control ===
@@ -265,7 +264,12 @@ impl PulsiveEngine {
 
     /// Send an actor command
     #[func]
-    fn send_action(&mut self, action_type: GString, target_id: i64, params: Dictionary) -> Dictionary {
+    fn send_action(
+        &mut self,
+        action_type: GString,
+        target_id: i64,
+        params: Dictionary,
+    ) -> Dictionary {
         let target = if target_id >= 0 {
             EntityRef::Entity(pulsive_core::EntityId::new(target_id as u64))
         } else {
@@ -278,7 +282,7 @@ impl PulsiveEngine {
             ActorId::new(1), // Default actor
             self.model.current_tick(),
         );
-        
+
         // Add params
         let mut msg = msg;
         msg.params = dict_to_value_map(&params);
@@ -297,12 +301,8 @@ impl PulsiveEngine {
             EntityRef::Global
         };
 
-        let msg = Msg::event(
-            event_id.to_string(),
-            target,
-            self.model.current_tick(),
-        );
-        
+        let msg = Msg::event(event_id.to_string(), target, self.model.current_tick());
+
         let mut msg = msg;
         msg.params = dict_to_value_map(&params);
 
@@ -350,21 +350,25 @@ impl PulsiveEngine {
 
     fn update_result_to_dict(&self, result: &UpdateResult) -> Dictionary {
         let mut dict = Dictionary::new();
-        
+
         // Spawned entities
-        let spawned: Vec<i64> = result.effect_result.spawned
+        let spawned: Vec<i64> = result
+            .effect_result
+            .spawned
             .iter()
             .map(|id| id.raw() as i64)
             .collect();
         dict.set("spawned", PackedInt64Array::from(spawned.as_slice()));
-        
+
         // Destroyed entities
-        let destroyed: Vec<i64> = result.effect_result.destroyed
+        let destroyed: Vec<i64> = result
+            .effect_result
+            .destroyed
             .iter()
             .map(|id| id.raw() as i64)
             .collect();
         dict.set("destroyed", PackedInt64Array::from(destroyed.as_slice()));
-        
+
         // Logs
         let mut logs = Array::new();
         for (level, message) in &result.effect_result.logs {
@@ -374,7 +378,7 @@ impl PulsiveEngine {
             logs.push(&log_dict.to_variant());
         }
         dict.set("logs", logs);
-        
+
         // Notifications
         let mut notifications = Array::new();
         for notification in &result.effect_result.notifications {
@@ -385,7 +389,7 @@ impl PulsiveEngine {
             notifications.push(&notif_dict.to_variant());
         }
         dict.set("notifications", notifications);
-        
+
         dict
     }
 }

@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use crate::models::*;
 use native_db::*;
-use pulsive_core::{Entity, EntityId, GameRng, Clock, Model, ValueMap};
+use pulsive_core::{Clock, Entity, EntityId, GameRng, Model, ValueMap};
 use std::path::Path;
 use std::sync::LazyLock;
 

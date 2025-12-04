@@ -4,6 +4,7 @@ members = [
     "crates/pulsive-db",
     "crates/pulsive-script",
     "crates/pulsive-godot",
+    "crates/pulsive-journal",
     "examples/simple_economy",
     "examples/typing_game",
     "examples/http_server",
@@ -22,6 +23,7 @@ pulsive-core = { path = "crates/pulsive-core" }
 pulsive-db = { path = "crates/pulsive-db" }
 pulsive-script = { path = "crates/pulsive-script" }
 pulsive-godot = { path = "crates/pulsive-godot" }
+pulsive-journal = { path = "crates/pulsive-journal" }
 
 # Database
 native_db = "0.8"
@@ -40,3 +42,4 @@ thiserror = "2.0"
 # Utilities
 indexmap = { version = "2.0", features = ["serde"] }
 bincode = "1.3"
+chrono = { version = "0.4", features = ["serde"] }

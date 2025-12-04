@@ -159,4 +159,3 @@ mod tests {
         assert_eq!(nation.properties.len(), 3);
     }
 }
-

@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Core reactive engine with Elm-style architecture and expression evaluation"
 
+[features]
+default = []
+journal = []  # Enable message recording and state snapshots for audit/replay/debug
+
 [dependencies]
 serde = { workspace = true }
 thiserror = { workspace = true }

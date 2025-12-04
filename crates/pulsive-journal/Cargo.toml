@@ -1,0 +1,21 @@
+[package]
+name = "pulsive-journal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Auditing, replay, and time-travel debugging for pulsive"
+
+[features]
+default = []
+serde_json = ["dep:serde_json"]  # JSON export support
+
+[dependencies]
+pulsive-core = { workspace = true, features = ["journal"] }
+serde = { workspace = true }
+ron = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }
+
+# Optional JSON support
+serde_json = { version = "1.0", optional = true }
+

@@ -139,13 +139,13 @@ impl LoadBalancer {
                     .map(|(_, b)| b.active_connections)
                     .min()
                     .unwrap_or(0);
-                
+
                 // Get all backends with minimum connections
                 let min_backends: Vec<_> = candidates
                     .iter()
                     .filter(|(_, b)| b.active_connections == min_conns)
                     .collect();
-                
+
                 // Round-robin among tied backends
                 if min_backends.len() > 1 {
                     let counter = self.rr_counter.fetch_add(1, Ordering::Relaxed);
@@ -226,7 +226,7 @@ impl LoadBalancer {
                 Ok(response) => {
                     let elapsed = start.elapsed().as_millis() as u64;
                     let healthy = response.status().is_success();
-                    
+
                     if healthy {
                         self.mark_healthy(&address).await;
                     } else {
@@ -271,14 +271,16 @@ impl LoadBalancer {
         headers: Vec<(String, String)>,
         body: Vec<u8>,
     ) -> Result<ProxyResponse, ProxyError> {
-        let backend = self.select_backend().await
+        let backend = self
+            .select_backend()
+            .await
             .ok_or(ProxyError::NoHealthyBackend)?;
 
         let url = format!("http://{}{}", backend, path);
         self.increment_connections(&backend).await;
 
         let start = Instant::now();
-        
+
         let mut request = match method {
             "GET" => self.client.get(&url),
             "POST" => self.client.post(&url),
@@ -349,7 +351,7 @@ impl LoadBalancer {
     pub fn start_health_check_task(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
         let lb = self.clone();
         let interval = self.health_check_interval;
-        
+
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(interval);
             loop {

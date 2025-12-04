@@ -20,11 +20,7 @@ pub enum FileResponse {
 }
 
 /// Serve a static file
-pub async fn serve_file(
-    root: &str,
-    path: &str,
-    index_files: &[String],
-) -> FileResponse {
+pub async fn serve_file(root: &str, path: &str, index_files: &[String]) -> FileResponse {
     // Decode percent-encoded path
     let decoded_path = match percent_decode_str(path).decode_utf8() {
         Ok(p) => p.to_string(),
@@ -33,7 +29,7 @@ pub async fn serve_file(
 
     // Remove leading slash and sanitize
     let clean_path = decoded_path.trim_start_matches('/');
-    
+
     // Prevent directory traversal
     if clean_path.contains("..") {
         return FileResponse::Error("Directory traversal not allowed".to_string());
@@ -89,7 +85,10 @@ async fn serve_single_file(path: &Path) -> FileResponse {
 }
 
 /// Generate directory listing HTML
-pub async fn generate_autoindex(dir_path: &Path, request_path: &str) -> Result<String, std::io::Error> {
+pub async fn generate_autoindex(
+    dir_path: &Path,
+    request_path: &str,
+) -> Result<String, std::io::Error> {
     let mut entries = Vec::new();
     let mut read_dir = fs::read_dir(dir_path).await?;
 
@@ -97,18 +96,20 @@ pub async fn generate_autoindex(dir_path: &Path, request_path: &str) -> Result<S
         let file_name = entry.file_name().to_string_lossy().to_string();
         let meta = entry.metadata().await?;
         let is_dir = meta.is_dir();
-        let size = if is_dir { "-".to_string() } else { format_size(meta.len()) };
-        
+        let size = if is_dir {
+            "-".to_string()
+        } else {
+            format_size(meta.len())
+        };
+
         entries.push((file_name, is_dir, size));
     }
 
     // Sort: directories first, then by name
-    entries.sort_by(|a, b| {
-        match (a.1, b.1) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.0.cmp(&b.0),
-        }
+    entries.sort_by(|a, b| match (a.1, b.1) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.0.cmp(&b.0),
     });
 
     let mut html = String::new();
@@ -139,11 +140,7 @@ pub async fn generate_autoindex(dir_path: &Path, request_path: &str) -> Result<S
             name.clone()
         };
         let class = if is_dir { " class=\"dir\"" } else { "" };
-        let href = if is_dir {
-            format!("{}/", name)
-        } else {
-            name
-        };
+        let href = if is_dir { format!("{}/", name) } else { name };
         html.push_str(&format!(
             "<tr><td><a href=\"{}\"{}>{}</a></td><td>{}</td></tr>\n",
             href, class, display_name, size

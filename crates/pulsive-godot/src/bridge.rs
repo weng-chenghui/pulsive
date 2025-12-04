@@ -33,9 +33,7 @@ pub fn variant_to_value(variant: &Variant) -> Value {
         VariantType::STRING => Value::String(variant.to::<GString>().to_string()),
         VariantType::ARRAY => {
             let arr = variant.to::<Array<Variant>>();
-            let list: Vec<Value> = arr.iter_shared()
-                .map(|v| variant_to_value(&v))
-                .collect();
+            let list: Vec<Value> = arr.iter_shared().map(|v| variant_to_value(&v)).collect();
             Value::List(list)
         }
         VariantType::DICTIONARY => {

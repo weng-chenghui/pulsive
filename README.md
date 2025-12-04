@@ -19,6 +19,7 @@ A reactive programming engine for Rust, inspired by the Elm architecture. Design
 - **Embedded Database**: High-performance storage using native_db
 - **Multi-Actor Ready**: Deterministic simulation with tick-based time and seeded RNG
 - **Godot Integration**: GDExtension bindings for Godot 4
+- **Journal System**: Recording, replay, and auditing for time-travel debugging and event sourcing
 
 ## Core Concepts
 
@@ -42,6 +43,7 @@ A reactive programming engine for Rust, inspired by the Elm architecture. Design
 | `pulsive-db` | Database layer using native_db |
 | `pulsive-script` | RON script loader and schema definitions |
 | `pulsive-godot` | Godot 4 GDExtension bindings |
+| `pulsive-journal` | Auditing, replay, and time-travel debugging |
 
 ## Quick Start
 
@@ -70,6 +72,48 @@ fn main() {
         .with_param("threshold", 30.0);
     runtime.send(msg);
     runtime.process_queue(&mut model);
+}
+```
+
+### With Journal (Recording & Replay)
+
+```toml
+[dependencies]
+pulsive-core = { version = "0.1", features = ["journal"] }
+pulsive-journal = "0.1"
+```
+
+```rust
+use pulsive_core::{Model, Runtime, Journal, JournalConfig};
+use pulsive_journal::{Auditor, Replayer, Exporter, ExportFormat};
+
+fn main() {
+    let mut model = Model::new();
+    let mut runtime = Runtime::new();
+    
+    // Enable recording with snapshots every 100 ticks
+    let mut journal = Journal::with_config(JournalConfig {
+        recording_enabled: true,
+        snapshot_interval: 100,
+        ..Default::default()
+    });
+    
+    // Run simulation with recording
+    for _ in 0..1000 {
+        runtime.tick_with_journal(&mut model, &mut journal);
+    }
+    
+    // Audit the session
+    let auditor = Auditor::new(&journal);
+    println!("{}", auditor.generate_report());
+    
+    // Replay to tick 500
+    let mut replayer = Replayer::new(&journal);
+    replayer.goto(&mut model, &mut runtime, 500).unwrap();
+    
+    // Export for external analysis
+    let exporter = Exporter::new(&journal);
+    let csv = exporter.export(ExportFormat::Csv).unwrap();
 }
 ```
 

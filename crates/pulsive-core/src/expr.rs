@@ -149,21 +149,19 @@ impl Expr {
 
             // Property access
             Expr::Property(name) => {
-                let entity = ctx.target.ok_or_else(|| Error::EvaluationError(
-                    "No target entity for Property access".to_string()
-                ))?;
+                let entity = ctx.target.ok_or_else(|| {
+                    Error::EvaluationError("No target entity for Property access".to_string())
+                })?;
                 Ok(entity.get(name).cloned().unwrap_or(Value::Null))
             }
             Expr::EntityProperty(entity_ref, name) => {
                 let entity = ctx.entities.resolve(entity_ref);
-                Ok(entity.and_then(|e| e.get(name).cloned()).unwrap_or(Value::Null))
+                Ok(entity
+                    .and_then(|e| e.get(name).cloned())
+                    .unwrap_or(Value::Null))
             }
-            Expr::Global(name) => {
-                Ok(ctx.globals.get(name).cloned().unwrap_or(Value::Null))
-            }
-            Expr::Param(name) => {
-                Ok(ctx.params.get(name).cloned().unwrap_or(Value::Null))
-            }
+            Expr::Global(name) => Ok(ctx.globals.get(name).cloned().unwrap_or(Value::Null)),
+            Expr::Param(name) => Ok(ctx.params.get(name).cloned().unwrap_or(Value::Null)),
 
             // Arithmetic
             Expr::Add(a, b) => {
@@ -351,9 +349,9 @@ impl Expr {
 
             // Entity queries
             Expr::HasFlag(flag) => {
-                let entity = ctx.target.ok_or_else(|| Error::EvaluationError(
-                    "No target entity for HasFlag".to_string()
-                ))?;
+                let entity = ctx.target.ok_or_else(|| {
+                    Error::EvaluationError("No target entity for HasFlag".to_string())
+                })?;
                 Ok(Value::Bool(entity.has_flag(flag)))
             }
             Expr::EntityExists(entity_ref) => {
@@ -365,9 +363,7 @@ impl Expr {
             }
 
             // Random
-            Expr::Random => {
-                Ok(Value::Float(ctx.rng.next_f64()))
-            }
+            Expr::Random => Ok(Value::Float(ctx.rng.next_f64())),
             Expr::RandomRange(min, max) => {
                 let vmin = min.eval(ctx)?;
                 let vmax = max.eval(ctx)?;
@@ -580,10 +576,9 @@ mod tests {
         let globals = ValueMap::new();
         let params = ValueMap::new();
         let mut rng = GameRng::new(42);
-        
+
         let entity = entities.get(entity_id).unwrap();
-        let mut ctx = EvalContext::new(&entities, &globals, &params, &mut rng)
-            .with_target(entity);
+        let mut ctx = EvalContext::new(&entities, &globals, &params, &mut rng).with_target(entity);
 
         let expr = Expr::prop("gold");
         assert_eq!(expr.eval(&mut ctx).unwrap().as_float(), Some(100.0));

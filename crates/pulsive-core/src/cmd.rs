@@ -16,10 +16,7 @@ pub enum Cmd {
     Emit(Msg),
 
     /// Schedule a message for a future tick
-    Schedule {
-        msg: Msg,
-        delay_ticks: u64,
-    },
+    Schedule { msg: Msg, delay_ticks: u64 },
 
     /// Persist the current state to the database
     PersistState,
@@ -37,26 +34,16 @@ pub enum Cmd {
     },
 
     /// Play a sound effect
-    PlaySound {
-        sound_id: DefId,
-        volume: f32,
-    },
+    PlaySound { sound_id: DefId, volume: f32 },
 
     /// Request to save the game
-    SaveGame {
-        slot: String,
-    },
+    SaveGame { slot: String },
 
     /// Request to load a saved game
-    LoadGame {
-        slot: String,
-    },
+    LoadGame { slot: String },
 
     /// Log a message for debugging
-    Log {
-        level: LogLevel,
-        message: String,
-    },
+    Log { level: LogLevel, message: String },
 }
 
 /// Log level for debug commands
@@ -106,7 +93,11 @@ impl Cmd {
     }
 
     /// Create a notification command
-    pub fn notify(kind: impl Into<DefId>, title: impl Into<String>, message: impl Into<String>) -> Self {
+    pub fn notify(
+        kind: impl Into<DefId>,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
         Cmd::Notify {
             kind: kind.into(),
             title: title.into(),
@@ -146,12 +137,8 @@ mod tests {
 
     #[test]
     fn test_cmd_batch() {
-        let cmd = Cmd::batch(vec![
-            Cmd::None,
-            Cmd::debug("hello"),
-            Cmd::None,
-        ]);
-        
+        let cmd = Cmd::batch(vec![Cmd::None, Cmd::debug("hello"), Cmd::None]);
+
         // Should flatten to single command
         matches!(cmd, Cmd::Log { .. });
     }
@@ -162,7 +149,7 @@ mod tests {
             Cmd::batch(vec![Cmd::debug("a"), Cmd::debug("b")]),
             Cmd::debug("c"),
         ]);
-        
+
         if let Cmd::Batch(cmds) = cmd {
             assert_eq!(cmds.len(), 3);
         } else {
@@ -170,4 +157,3 @@ mod tests {
         }
     }
 }
-

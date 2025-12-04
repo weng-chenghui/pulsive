@@ -57,11 +57,9 @@ impl Loader {
     pub fn load_file(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
         let content = fs::read_to_string(path)?;
-        
+
         // Try to determine the type based on content or filename
-        let filename = path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
+        let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         if filename.contains("resource") || content.contains("resources:") {
             self.load_resources_str(&content)?;
@@ -80,7 +78,7 @@ impl Loader {
             if let Ok(()) = self.load_entity_types_str(&content) {
                 return Ok(());
             }
-            
+
             // Try as single definitions
             self.load_single_definition(&content)?;
         }
@@ -174,13 +172,15 @@ impl Loader {
             return Ok(());
         }
 
-        Err(Error::InvalidSchema("Could not parse as any known definition type".to_string()))
+        Err(Error::InvalidSchema(
+            "Could not parse as any known definition type".to_string(),
+        ))
     }
 
     /// Load all RON files from a directory
     pub fn load_directory(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
-        
+
         if !path.is_dir() {
             return Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -191,7 +191,7 @@ impl Loader {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
             let file_path = entry.path();
-            
+
             if file_path.extension().map(|e| e == "ron").unwrap_or(false) {
                 self.load_file(&file_path)?;
             } else if file_path.is_dir() {
@@ -246,7 +246,7 @@ mod tests {
 
         let mut loader = Loader::new();
         loader.load_resources_str(content).unwrap();
-        
+
         let defs = loader.finish();
         assert!(defs.get_resource(&DefId::new("gold")).is_some());
         assert!(defs.get_resource(&DefId::new("manpower")).is_some());
@@ -265,7 +265,7 @@ mod tests {
 
         let mut loader = Loader::new();
         loader.load_single_definition(content).unwrap();
-        
+
         let defs = loader.finish();
         assert!(defs.get_resource(&DefId::new("gold")).is_some());
     }

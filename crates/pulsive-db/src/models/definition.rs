@@ -115,4 +115,3 @@ pub struct StoredScheduledEvent {
     /// Serialized parameters.
     pub params: Vec<u8>,
 }
-

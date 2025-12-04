@@ -2,8 +2,8 @@
 //!
 //! Exposes the pulsive engine to Godot as native classes.
 
-mod engine;
 mod bridge;
+mod engine;
 
 use godot::prelude::*;
 
