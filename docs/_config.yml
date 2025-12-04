@@ -1,6 +1,5 @@
 title: Pulsive
-description: A reactive programming engine for Rust, inspired by the Elm architecture
+description: A reactive programming engine for Rust, inspired by Elm architecture
 theme: jekyll-theme-cayman
 show_downloads: true
 google_analytics:
-

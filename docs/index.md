@@ -7,14 +7,19 @@ title: Pulsive - Reactive Engine for Rust
 
 A reactive programming engine for Rust, inspired by the Elm architecture.
 
-<div class="ai-notice">
-<strong>🤖 AI-Built Project</strong><br>
-This project was almost entirely implemented by an AI agent (Claude) in a single conversation session. The motivation is to demonstrate how well AI can use Rust as a tool to implement well-known software patterns while maintaining performance and correctness.
-</div>
+## 🤖 AI-Generated Project
+
+> **This project was almost entirely implemented by an AI agent (Claude).**
+>
+> The motivation is to demonstrate how effectively an AI agent can use Rust as a tool to implement well-known software patterns (Elm architecture, reactive programming, entity-component systems) while maintaining performance and correctness.
+>
+> The human provided high-level requirements and guidance; the AI handled architecture decisions, code implementation, testing, and documentation.
+
+---
 
 ## What is Pulsive?
 
-Pulsive is a **data-driven reactive engine** that brings the predictability of Elm's architecture to Rust. Instead of hardcoding game logic or business rules, everything is defined dynamically through entities, events, and expressions.
+Pulsive is a **data-driven reactive engine** that separates your application logic from hardcoded implementations. Instead of writing `if/else` chains for every game event or system rule, you define entities, events, and effects in configuration files—and Pulsive evaluates them at runtime.
 
 ## Use Cases
 
@@ -25,12 +30,11 @@ Pulsive is a **data-driven reactive engine** that brings the predictability of E
 | **IoT/Automation** | Reactive rule engines, home automation |
 | **Financial** | Trading simulations, economic modeling |
 
-## Core Architecture
+## Core Concepts
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    Your Application                     │
-│              (Godot, CLI, Web Server, etc.)             │
 └─────────────────────────┬───────────────────────────────┘
                           │
 ┌─────────────────────────▼───────────────────────────────┐
@@ -49,23 +53,18 @@ Pulsive is a **data-driven reactive engine** that brings the predictability of E
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Key Concepts
+### Key Types
 
-| Concept | Description |
-|---------|-------------|
-| `Actor` | Any principal that submits commands (user, player, service, bot) |
+| Type | Purpose |
+|------|---------|
+| `Actor` | Any principal that submits commands |
 | `Command` | A validated action to process |
-| `Clock` | Simulation time with tick-based progression |
-| `Entity` | A dynamic object with properties and flags |
-| `Msg` | An event or command in the message queue |
-| `Model` | The complete system state |
+| `Entity` | Dynamic object with properties and flags |
+| `Clock` | Tick-based simulation time |
+| `Model` | Complete system state |
+| `Msg` | Event or command in the queue |
 
 ## Quick Start
-
-```toml
-[dependencies]
-pulsive-core = "0.1"
-```
 
 ```rust
 use pulsive_core::{Model, Runtime, Msg, EntityRef};
@@ -94,50 +93,40 @@ fn main() {
 
 | Crate | Description |
 |-------|-------------|
-| **pulsive-core** | Core types, expression engine, and Elm-style runtime |
-| **pulsive-db** | Database layer using native_db |
-| **pulsive-script** | RON script loader and schema definitions |
-| **pulsive-godot** | Godot 4 GDExtension bindings |
+| [pulsive-core](https://github.com/nicweng/pulsive/tree/main/crates/pulsive-core) | Core types, expression engine, Elm-style runtime |
+| [pulsive-db](https://github.com/nicweng/pulsive/tree/main/crates/pulsive-db) | Database layer using native_db |
+| [pulsive-script](https://github.com/nicweng/pulsive/tree/main/crates/pulsive-script) | RON script loader and schema definitions |
+| [pulsive-godot](https://github.com/nicweng/pulsive/tree/main/crates/pulsive-godot) | Godot 4 GDExtension bindings |
 
 ## Examples
 
-The repository includes several examples demonstrating different use cases:
+| Example | What it demonstrates |
+|---------|---------------------|
+| **simple_economy** | Tick-based economy with resource production |
+| **typing_game** | Console game with event-driven input handling |
+| **http_server** | Load balancing, caching, rate limiting |
+| **godot_demo** | Godot 4 GDExtension integration |
 
-- **simple_economy** - Economy simulation with tick-based resource updates
-- **typing_game** - Console typing game with event-driven scoring  
-- **http_server** - HTTP server with load balancing, caching, rate limiting
-- **godot_demo** - Godot 4 project showing GDExtension integration
-
-## Features
+## Features Implemented by AI
 
 - ✅ Elm-style Model-Update-Command architecture
-- ✅ Dynamic entities with properties and flags
-- ✅ Expression engine for conditions and effects
+- ✅ Dynamic entity system with properties and flags
+- ✅ Expression engine for runtime evaluation
 - ✅ Multi-actor support with deterministic simulation
 - ✅ Tick-based time with configurable speed
 - ✅ RON script loading for data-driven content
-- ✅ Embedded database (native_db)
+- ✅ native_db integration for persistence
 - ✅ Godot 4 GDExtension bindings
-- ✅ GitHub Actions CI/CD
+- ✅ HTTP server example with load balancing
+- ✅ Docker Compose integration tests
+- ✅ GitHub Actions CI/CD pipelines
 
-## About This Project
+## What This Experiment Shows
 
-This project serves as an experiment in AI-assisted software development. The entire codebase—including:
-
-- 4 library crates with ~3,000 lines of Rust
-- 4 example applications
-- Docker integration tests
-- GitHub Actions workflows
-- Documentation
-
-—was generated by Claude (Anthropic's AI) working with a human developer in a collaborative coding session. The human provided high-level requirements and guidance, while the AI wrote the implementation.
-
-### Goals of This Experiment
-
-1. **Demonstrate AI capabilities**: Show that AI can produce production-quality Rust code
-2. **Test pattern implementation**: Verify AI understanding of software patterns (Elm architecture, ECS-like systems)
-3. **Evaluate correctness**: All code compiles and passes tests
-4. **Assess maintainability**: Code follows Rust idioms and best practices
+1. **Rust is AI-friendly**: Strong type system catches errors early, making iterative AI development effective
+2. **Patterns translate well**: Elm architecture, ECS concepts, and reactive patterns were implemented correctly
+3. **Testing matters**: The AI wrote tests that caught real bugs during development
+4. **Documentation is natural**: API documentation and README files were generated alongside code
 
 ## License
 
@@ -145,7 +134,4 @@ Licensed under either of Apache License, Version 2.0 or MIT license at your opti
 
 ---
 
-<p class="footer">
-View the source on <a href="https://github.com/weng-chenghui/pulsive">GitHub</a>
-</p>
-
+[View on GitHub](https://github.com/nicweng/pulsive) | [Report Issues](https://github.com/nicweng/pulsive/issues)
