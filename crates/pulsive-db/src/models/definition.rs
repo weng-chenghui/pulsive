@@ -77,6 +77,7 @@ pub struct StoredEventDef {
 }
 
 /// Stored modifier definition.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[native_model(id = 13, version = 1)]
 #[native_db]

@@ -3,6 +3,8 @@
 //! This example demonstrates pulsive's reactive architecture applied to
 //! a real-world HTTP server scenario with Nginx-like features.
 
+#![allow(dead_code)]
+
 mod cache;
 mod config;
 mod proxy;

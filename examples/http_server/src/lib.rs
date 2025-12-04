@@ -6,6 +6,8 @@
 //! - Tick-based health checks
 //! - In-memory caching and rate limiting
 
+#![allow(dead_code)]
+
 pub mod cache;
 pub mod config;
 pub mod proxy;
