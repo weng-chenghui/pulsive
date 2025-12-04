@@ -1,0 +1,20 @@
+/* Sample CSS file for testing static file serving */
+
+:root {
+    --primary: #6366f1;
+    --secondary: #a855f7;
+}
+
+body {
+    font-family: system-ui, sans-serif;
+    line-height: 1.6;
+    color: #333;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1rem;
+}
+
+

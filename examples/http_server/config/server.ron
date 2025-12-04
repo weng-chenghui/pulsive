@@ -1,0 +1,62 @@
+(
+    servers: [
+        (
+            listen: ["0.0.0.0:8080"],
+            root: "./www",
+            index: ["index.html", "index.htm"],
+            error_pages: {
+                404: "/404.html",
+                500: "/500.html",
+            },
+            locations: [
+                (
+                    path: "/static",
+                    root: Some("./www/static"),
+                    autoindex: true,
+                    cache_ttl_secs: Some(300),
+                ),
+                (
+                    path: "/api",
+                    proxy_pass: Some("api_backend"),
+                    rate_limit: Some((
+                        requests: 100,
+                        per_secs: 60,
+                    )),
+                ),
+                (
+                    path: "/old-page",
+                    return_code: Some(301),
+                    return_url: Some("/new-page"),
+                ),
+            ],
+            add_headers: {
+                "X-Powered-By": "Pulsive",
+            },
+        ),
+    ],
+    upstreams: [
+        (
+            name: "api_backend",
+            method: LeastConn,
+            health_check_interval_ms: 5000,
+            health_check_path: "/health",
+            health_check_timeout_ms: 2000,
+            servers: [
+                (
+                    address: "127.0.0.1:3001",
+                    weight: 2,
+                ),
+                (
+                    address: "127.0.0.1:3002",
+                    weight: 1,
+                    backup: true,
+                ),
+            ],
+        ),
+    ],
+    cache: Some((
+        max_entries: 1000,
+        default_ttl_secs: 60,
+    )),
+    access_log: Some("./access.log"),
+)

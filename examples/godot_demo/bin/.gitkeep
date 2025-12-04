@@ -1,0 +1,3 @@
+# This directory holds compiled pulsive-godot libraries.
+# Run `cargo build -p pulsive-godot` and copy the library here.
+

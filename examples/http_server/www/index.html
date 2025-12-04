@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pulsive HTTP Server</title>
+    <style>
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.3);
+            --text-primary: #e4e4e7;
+            --text-secondary: #71717a;
+            --border: #27272a;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            background-image: 
+                radial-gradient(ellipse at top, var(--accent-glow) 0%, transparent 50%),
+                linear-gradient(180deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+        }
+        
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent) 0%, #a855f7 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 0.5rem;
+        }
+        
+        .subtitle {
+            color: var(--text-secondary);
+            font-size: 1rem;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .feature {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+        
+        .feature:hover {
+            transform: translateY(-2px);
+            border-color: var(--accent);
+        }
+        
+        .feature-icon {
+            font-size: 1.5rem;
+            margin-bottom: 0.75rem;
+        }
+        
+        .feature h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        
+        .feature p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+        
+        .code-block {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1.5rem;
+            overflow-x: auto;
+        }
+        
+        .code-block pre {
+            font-size: 0.85rem;
+            line-height: 1.6;
+        }
+        
+        .code-block .comment {
+            color: var(--text-secondary);
+        }
+        
+        .code-block .keyword {
+            color: var(--accent);
+        }
+        
+        .code-block .string {
+            color: #22c55e;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: 3rem;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+        
+        footer a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+        
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Pulsive HTTP Server</h1>
+            <p class="subtitle">Reactive architecture meets web serving</p>
+        </header>
+        
+        <div class="feature-grid">
+            <div class="feature">
+                <div class="feature-icon">⚡</div>
+                <h3>Load Balancing</h3>
+                <p>Round-robin, least connections, and weighted distribution with automatic health checks.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🔄</div>
+                <h3>Regex Rewrites</h3>
+                <p>Safe O(n) URL rewriting using Rust's regex crate. No ReDoS vulnerabilities.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">💾</div>
+                <h3>Response Cache</h3>
+                <p>In-memory LRU caching with configurable TTL per location.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🚦</div>
+                <h3>Rate Limiting</h3>
+                <p>Token bucket algorithm with per-IP tracking and automatic cleanup.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">📁</div>
+                <h3>Static Files</h3>
+                <p>Fast file serving with MIME detection and directory listing support.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🔧</div>
+                <h3>RON Config</h3>
+                <p>Nginx-like configuration in Rust Object Notation format.</p>
+            </div>
+        </div>
+        
+        <div class="code-block">
+            <pre><span class="comment">// Example RON configuration</span>
+(
+    servers: [(
+        listen: [<span class="string">"0.0.0.0:8080"</span>],
+        root: <span class="string">"./www"</span>,
+        locations: [
+            ( path: <span class="string">"/api"</span>, proxy_pass: <span class="keyword">Some</span>(<span class="string">"backend"</span>) ),
+            ( path: <span class="string">"/static"</span>, cache_ttl_secs: <span class="keyword">Some</span>(300) ),
+        ],
+    )],
+    upstreams: [(
+        name: <span class="string">"backend"</span>,
+        method: <span class="keyword">LeastConn</span>,
+        servers: [
+            ( address: <span class="string">"127.0.0.1:3001"</span>, weight: 2 ),
+            ( address: <span class="string">"127.0.0.1:3002"</span>, weight: 1 ),
+        ],
+    )],
+)</pre>
+        </div>
+        
+        <footer>
+            <p>Built with <a href="https://github.com/user/pulsive">Pulsive</a> &mdash; Reactive Rust</p>
+        </footer>
+    </div>
+</body>
+</html>

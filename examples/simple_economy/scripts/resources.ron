@@ -1,0 +1,43 @@
+// Resource definitions for a simple economy
+(
+    resources: [
+        (
+            id: "gold",
+            name: "Gold",
+            description: "The primary currency",
+            base_value: 1.0,
+            tradeable: true,
+            decay_rate: 0.0,
+            min_value: Some(0.0),
+        ),
+        (
+            id: "manpower",
+            name: "Manpower",
+            description: "Available soldiers and workers",
+            base_value: 0.5,
+            tradeable: false,
+            decay_rate: 0.0,
+            min_value: Some(0.0),
+            max_value: Some(1000000.0),
+        ),
+        (
+            id: "grain",
+            name: "Grain",
+            description: "Food supplies",
+            base_value: 0.3,
+            tradeable: true,
+            decay_rate: 0.05,
+            min_value: Some(0.0),
+        ),
+        (
+            id: "iron",
+            name: "Iron",
+            description: "Raw material for weapons and tools",
+            base_value: 2.0,
+            tradeable: true,
+            decay_rate: 0.0,
+            min_value: Some(0.0),
+        ),
+    ]
+)
+

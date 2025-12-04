@@ -1,0 +1,100 @@
+// Entity type definitions
+(
+    entity_types: [
+        (
+            id: "nation",
+            name: "Nation",
+            description: "A sovereign state",
+            properties: [
+                (
+                    name: "name",
+                    property_type: String,
+                    required: true,
+                ),
+                (
+                    name: "gold",
+                    property_type: Float,
+                    default: Some(Float(100.0)),
+                    min: Some(0.0),
+                ),
+                (
+                    name: "manpower",
+                    property_type: Float,
+                    default: Some(Float(10000.0)),
+                    min: Some(0.0),
+                ),
+                (
+                    name: "stability",
+                    property_type: Int,
+                    default: Some(Int(0)),
+                    min: Some(-3.0),
+                    max: Some(3.0),
+                ),
+                (
+                    name: "tax_rate",
+                    property_type: Float,
+                    default: Some(Float(0.1)),
+                    min: Some(0.0),
+                    max: Some(1.0),
+                ),
+            ],
+        ),
+        (
+            id: "province",
+            name: "Province",
+            description: "A territorial subdivision",
+            properties: [
+                (
+                    name: "name",
+                    property_type: String,
+                    required: true,
+                ),
+                (
+                    name: "population",
+                    property_type: Float,
+                    default: Some(Float(10000.0)),
+                    min: Some(0.0),
+                ),
+                (
+                    name: "development",
+                    property_type: Float,
+                    default: Some(Float(1.0)),
+                    min: Some(0.0),
+                ),
+                (
+                    name: "owner",
+                    property_type: EntityRef,
+                ),
+            ],
+        ),
+        (
+            id: "army",
+            name: "Army",
+            description: "A military unit",
+            properties: [
+                (
+                    name: "size",
+                    property_type: Float,
+                    default: Some(Float(1000.0)),
+                    min: Some(0.0),
+                ),
+                (
+                    name: "morale",
+                    property_type: Float,
+                    default: Some(Float(1.0)),
+                    min: Some(0.0),
+                    max: Some(1.0),
+                ),
+                (
+                    name: "owner",
+                    property_type: EntityRef,
+                ),
+                (
+                    name: "location",
+                    property_type: EntityRef,
+                ),
+            ],
+        ),
+    ]
+)
+

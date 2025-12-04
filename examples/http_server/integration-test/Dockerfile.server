@@ -1,0 +1,34 @@
+# Multi-stage build for pulsive HTTP server
+FROM rust:1.83-slim-bookworm AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+
+# Copy workspace files
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+COPY examples/ ./examples/
+
+# Build the http_server example
+RUN cargo build --release -p http_server
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the binary
+COPY --from=builder /app/target/release/http_server /app/http_server
+
+# Copy config and www files
+COPY examples/http_server/config/ /app/config/
+COPY examples/http_server/www/ /app/www/
+
+EXPOSE 8080
+
+CMD ["/app/http_server", "config/server.ron"]
+

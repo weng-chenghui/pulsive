@@ -1,0 +1,47 @@
+# Rust
+/target/
+**/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Godot
+*.import
+.godot/
+export_presets.cfg
+
+# Build artifacts
+*.dylib
+*.dll
+*.so
+*.a
+*.lib
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+access.log
+
+# Test artifacts
+lcov.info
+coverage/
+
+# Docker (keep compose files, ignore runtime)
+.docker/
+
+# Environment
+.env
+.env.local

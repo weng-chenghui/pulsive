@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/pulsive-core",
+    "crates/pulsive-db",
+    "crates/pulsive-script",
+    "crates/pulsive-godot",
+    "examples/simple_economy",
+    "examples/typing_game",
+    "examples/http_server",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/user/pulsive"
+
+[workspace.dependencies]
+# Internal crates
+pulsive-core = { path = "crates/pulsive-core" }
+pulsive-db = { path = "crates/pulsive-db" }
+pulsive-script = { path = "crates/pulsive-script" }
+pulsive-godot = { path = "crates/pulsive-godot" }
+
+# Database
+native_db = "0.8"
+native_model = "0.4"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.8"
+
+# Godot bindings
+godot = "0.2"
+
+# Error handling
+thiserror = "2.0"
+
+# Utilities
+indexmap = { version = "2.0", features = ["serde"] }
+bincode = "1.3"

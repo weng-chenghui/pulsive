@@ -1,0 +1,19 @@
+# Load testing client using hey (https://github.com/rakyll/hey)
+FROM golang:1.21-alpine AS builder
+
+RUN go install github.com/rakyll/hey@latest
+
+FROM alpine:3.19
+
+RUN apk add --no-cache curl jq bash
+
+COPY --from=builder /go/bin/hey /usr/local/bin/hey
+COPY run_tests.sh /app/run_tests.sh
+
+RUN chmod +x /app/run_tests.sh
+
+WORKDIR /app
+
+# Wait for services to be ready, then run tests
+CMD ["/app/run_tests.sh"]
+

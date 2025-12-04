@@ -1,0 +1,27 @@
+// Typing challenge sentences
+// These are loaded by the game and presented to the player
+(
+    sentences: [
+        "The quick brown fox jumps over the lazy dog.",
+        "Pack my box with five dozen liquor jugs.",
+        "How vexingly quick daft zebras jump!",
+        "The five boxing wizards jump quickly.",
+        "Sphinx of black quartz, judge my vow.",
+        "Two driven jocks help fax my big quiz.",
+        "The job requires extra pluck and zeal from every young wage earner.",
+        "A mad boxer shot a quick, gloved jab to the jaw of his dizzy opponent.",
+        "Jackdaws love my big sphinx of quartz.",
+        "We promptly judged antique ivory buckles for the next prize.",
+        "All questions asked by five watched experts amaze the judge.",
+        "Jack quietly moved up front and seized the big ball of wax.",
+        "Few quips galvanized the mock jury box.",
+        "The quick onyx goblin jumps over the lazy dwarf.",
+        "Crazy Frederick bought many very exquisite opal jewels.",
+        "We have just quoted on nine dozen boxes of gray lamp wicks.",
+        "A quivering Texas zombie fought republic linked jewelry.",
+        "Grumpy wizards make toxic brew for the evil queen and jack.",
+        "The wizard quickly jinxed the gnomes before they vaporized.",
+        "Amazingly few discotheques provide jukeboxes.",
+    ]
+)
+

@@ -1,0 +1,84 @@
+# Pulsive HTTP Server Integration Test
+# 
+# This docker-compose file sets up:
+# - 2 backend servers (simulating upstream services)
+# - 1 pulsive HTTP server (the load balancer)
+# - 1 load test client (runs performance tests automatically)
+#
+# Usage:
+#   docker compose up --build
+#
+# The load test client will:
+# 1. Wait for all services to be ready
+# 2. Run functional tests
+# 3. Run performance tests using 'hey'
+# 4. Print results and exit
+
+services:
+  # Backend server 1
+  backend1:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      - SERVER_ID=backend-1
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - pulsive-net
+
+  # Backend server 2
+  backend2:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    environment:
+      - SERVER_ID=backend-2
+      - PORT=8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - pulsive-net
+
+  # Pulsive HTTP server (load balancer)
+  pulsive:
+    build:
+      context: ../../..
+      dockerfile: examples/http_server/integration-test/Dockerfile.server
+    ports:
+      - "8080:8080"
+    depends_on:
+      backend1:
+        condition: service_healthy
+      backend2:
+        condition: service_healthy
+    networks:
+      - pulsive-net
+    volumes:
+      - ./server-test.ron:/app/config/server.ron:ro
+
+  # Load test client
+  loadtest:
+    build:
+      context: .
+      dockerfile: Dockerfile.loadtest
+    depends_on:
+      - pulsive
+    environment:
+      - SERVER_URL=http://pulsive:8080
+      - BACKEND1_URL=http://backend1:8000
+      - BACKEND2_URL=http://backend2:8000
+    networks:
+      - pulsive-net
+
+networks:
+  pulsive-net:
+    driver: bridge
+

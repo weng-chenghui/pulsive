@@ -1,0 +1,15 @@
+[package]
+name = "pulsive-godot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Godot 4 GDExtension bindings for pulsive engine"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+pulsive-core = { workspace = true }
+pulsive-db = { workspace = true }
+pulsive-script = { workspace = true }
+godot = { workspace = true }

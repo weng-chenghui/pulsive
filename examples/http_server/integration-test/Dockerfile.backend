@@ -1,0 +1,14 @@
+# Simple backend server for load balancing tests
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Create a simple Flask-like server using only stdlib
+COPY backend_server.py /app/
+
+EXPOSE 8000
+
+CMD ["python", "backend_server.py"]
+

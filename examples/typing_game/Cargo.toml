@@ -1,0 +1,13 @@
+[package]
+name = "typing_game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Typing speed game demonstrating pulsive reactive architecture"
+
+[dependencies]
+pulsive-core = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+crossterm = "0.28"
+

@@ -1,0 +1,33 @@
+[package]
+name = "http_server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Static HTTP server with load balancing demonstrating pulsive"
+
+[dependencies]
+pulsive-core = { workspace = true }
+serde = { workspace = true }
+ron = { workspace = true }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# HTTP
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http-body-util = "0.1"
+
+# HTTP client for proxy/health checks
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+# Regex for URL rewriting
+regex = "1.10"
+
+# In-memory caching
+moka = { version = "0.12", features = ["future"] }
+
+# Utilities
+mime_guess = "2.0"
+percent-encoding = "2.3"
+chrono = "0.4"

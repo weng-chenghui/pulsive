@@ -1,0 +1,69 @@
+// Pulsive HTTP Server - Integration Test Configuration
+// This config is used by docker-compose for testing
+
+(
+    servers: [
+        (
+            listen: ["0.0.0.0:8080"],
+            root: "./www",
+            index: ["index.html", "index.htm"],
+            error_pages: {
+                404: "/404.html",
+                500: "/500.html",
+            },
+            locations: [
+                // Static files with caching
+                (
+                    path: "/static",
+                    root: Some("./www/static"),
+                    autoindex: true,
+                    cache_ttl_secs: Some(60),
+                ),
+                // API endpoints with load balancing and rate limiting
+                (
+                    path: "/api",
+                    proxy_pass: Some("api_backend"),
+                    rate_limit: Some((
+                        requests: 100,
+                        per_secs: 60,
+                    )),
+                ),
+                // Redirect test
+                (
+                    path: "/old-page",
+                    return_code: Some(301),
+                    return_url: Some("/new-page"),
+                ),
+            ],
+            add_headers: {
+                "X-Powered-By": "Pulsive",
+                "X-Test": "integration",
+            },
+        ),
+    ],
+    // Upstream backends - docker-compose service names
+    upstreams: [
+        (
+            name: "api_backend",
+            method: LeastConn,
+            health_check_interval_ms: 3000,
+            health_check_path: "/health",
+            health_check_timeout_ms: 2000,
+            servers: [
+                (
+                    address: "backend1:8000",
+                    weight: 1,
+                ),
+                (
+                    address: "backend2:8000",
+                    weight: 1,
+                ),
+            ],
+        ),
+    ],
+    cache: Some((
+        max_entries: 100,
+        default_ttl_secs: 30,
+    )),
+)
+
