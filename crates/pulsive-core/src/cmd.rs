@@ -36,11 +36,11 @@ pub enum Cmd {
     /// Play a sound effect
     PlaySound { sound_id: DefId, volume: f32 },
 
-    /// Request to save the game
-    SaveGame { slot: String },
+    /// Request to save current state
+    Save { slot: String },
 
-    /// Request to load a saved game
-    LoadGame { slot: String },
+    /// Request to load saved state
+    Load { slot: String },
 
     /// Log a message for debugging
     Log { level: LogLevel, message: String },

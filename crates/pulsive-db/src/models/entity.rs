@@ -156,16 +156,16 @@ pub struct StoredRng {
 }
 
 impl StoredRng {
-    /// Create from GameRng.
-    pub fn from_rng(rng: &pulsive_core::GameRng) -> Self {
+    /// Create from Rng.
+    pub fn from_rng(rng: &pulsive_core::Rng) -> Self {
         Self {
             id: "rng".to_string(),
             state: rng.state(),
         }
     }
 
-    /// Convert to GameRng.
-    pub fn to_rng(&self) -> pulsive_core::GameRng {
-        pulsive_core::GameRng::from_state(self.state)
+    /// Convert to Rng.
+    pub fn to_rng(&self) -> pulsive_core::Rng {
+        pulsive_core::Rng::from_state(self.state)
     }
 }

@@ -50,7 +50,7 @@ pub use expr::{EvalContext, Expr};
 pub use identity::{DefId, EntityId};
 pub use model::Model;
 pub use msg::{Msg, MsgKind};
-pub use rng::GameRng;
+pub use rng::Rng;
 pub use runtime::{EventHandler, Runtime, TickHandler, UpdateResult};
 pub use state_history::{StateHistory, StateInterpolation};
 pub use time::{Clock, Speed, Tick, Timestamp};

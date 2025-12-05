@@ -273,7 +273,7 @@ impl PulsiveRouter {
 
                     // Create context for evaluation
                     let empty_params = pulsive_core::ValueMap::new();
-                    let mut rng = pulsive_core::GameRng::new(0);
+                    let mut rng = pulsive_core::Rng::new(0);
                     let mut ctx =
                         EvalContext::new(&model.entities, &model.globals, &empty_params, &mut rng);
                     ctx.target = Some(entity);

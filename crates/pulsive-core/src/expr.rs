@@ -1,9 +1,9 @@
 //! Expression engine for evaluating conditions
 //!
 //! Expressions are loaded from RON scripts and evaluated at runtime
-//! against the current game state.
+//! against the current model state.
 
-use crate::{DefId, Entity, EntityRef, EntityStore, Error, GameRng, Result, Value, ValueMap};
+use crate::{DefId, Entity, EntityRef, EntityStore, Error, Result, Rng, Value, ValueMap};
 use serde::{Deserialize, Serialize};
 
 /// An expression that can be evaluated to produce a Value
@@ -113,7 +113,7 @@ pub struct EvalContext<'a> {
     /// Parameters passed to this context
     pub params: &'a ValueMap,
     /// Random number generator
-    pub rng: &'a mut GameRng,
+    pub rng: &'a mut Rng,
 }
 
 impl<'a> EvalContext<'a> {
@@ -122,7 +122,7 @@ impl<'a> EvalContext<'a> {
         entities: &'a EntityStore,
         globals: &'a ValueMap,
         params: &'a ValueMap,
-        rng: &'a mut GameRng,
+        rng: &'a mut Rng,
     ) -> Self {
         Self {
             target: None,
@@ -498,7 +498,7 @@ mod tests {
         entities: &'a EntityStore,
         globals: &'a ValueMap,
         params: &'a ValueMap,
-        rng: &'a mut GameRng,
+        rng: &'a mut Rng,
     ) -> EvalContext<'a> {
         EvalContext::new(entities, globals, params, rng)
     }
@@ -508,7 +508,7 @@ mod tests {
         let entities = EntityStore::new();
         let globals = ValueMap::new();
         let params = ValueMap::new();
-        let mut rng = GameRng::new(42);
+        let mut rng = Rng::new(42);
         let mut ctx = make_context(&entities, &globals, &params, &mut rng);
 
         let expr = Expr::lit(42i64);
@@ -523,7 +523,7 @@ mod tests {
         let entities = EntityStore::new();
         let globals = ValueMap::new();
         let params = ValueMap::new();
-        let mut rng = GameRng::new(42);
+        let mut rng = Rng::new(42);
         let mut ctx = make_context(&entities, &globals, &params, &mut rng);
 
         let expr = Expr::Add(Box::new(Expr::lit(10.0)), Box::new(Expr::lit(5.0)));
@@ -538,7 +538,7 @@ mod tests {
         let entities = EntityStore::new();
         let globals = ValueMap::new();
         let params = ValueMap::new();
-        let mut rng = GameRng::new(42);
+        let mut rng = Rng::new(42);
         let mut ctx = make_context(&entities, &globals, &params, &mut rng);
 
         let expr = Expr::Gt(Box::new(Expr::lit(10.0)), Box::new(Expr::lit(5.0)));
@@ -553,7 +553,7 @@ mod tests {
         let entities = EntityStore::new();
         let globals = ValueMap::new();
         let params = ValueMap::new();
-        let mut rng = GameRng::new(42);
+        let mut rng = Rng::new(42);
         let mut ctx = make_context(&entities, &globals, &params, &mut rng);
 
         let expr = Expr::And(vec![Expr::lit(true), Expr::lit(true)]);
@@ -575,7 +575,7 @@ mod tests {
 
         let globals = ValueMap::new();
         let params = ValueMap::new();
-        let mut rng = GameRng::new(42);
+        let mut rng = Rng::new(42);
 
         let entity = entities.get(entity_id).unwrap();
         let mut ctx = EvalContext::new(&entities, &globals, &params, &mut rng).with_target(entity);

@@ -1,7 +1,7 @@
-//! Effect types for modifying game state
+//! Effect types for modifying system state
 //!
 //! Effects are the "write" side of the expression engine.
-//! They describe changes to be made to entities and game state.
+//! They describe changes to be made to entities and system state.
 
 use crate::{DefId, EntityRef, Expr, ValueMap};
 use serde::{Deserialize, Serialize};
@@ -46,7 +46,7 @@ impl ModifyOp {
     }
 }
 
-/// An effect that modifies game state
+/// An effect that modifies system state
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Effect {
     // === Property Modification ===

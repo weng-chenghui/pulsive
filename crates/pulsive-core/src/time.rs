@@ -200,20 +200,20 @@ mod tests {
 
     #[test]
     fn test_clock() {
-        let mut clock = Clock::with_start_date(1444, 11, 11);
+        let mut clock = Clock::with_start_date(2000, 1, 1);
         assert_eq!(clock.tick, 0);
-        assert_eq!(clock.current_date().to_string(), "1444-11-11");
+        assert_eq!(clock.current_date().to_string(), "2000-01-01");
 
         clock.advance();
         assert_eq!(clock.tick, 1);
-        assert_eq!(clock.current_date().to_string(), "1444-11-12");
+        assert_eq!(clock.current_date().to_string(), "2000-01-02");
     }
 
     #[test]
     fn test_timestamp_add_days() {
-        let date = Timestamp::new(1444, 11, 11);
-        assert_eq!(date.add_days(20).to_string(), "1444-12-01");
-        assert_eq!(date.add_days(365).to_string(), "1445-11-11");
+        let date = Timestamp::new(2000, 1, 1);
+        assert_eq!(date.add_days(30).to_string(), "2000-01-31");
+        assert_eq!(date.add_days(366).to_string(), "2001-01-01"); // 2000 is leap year
     }
 
     #[test]

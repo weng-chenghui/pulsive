@@ -1,6 +1,6 @@
 //! System model (state)
 
-use crate::{ActorId, Clock, Context, EntityStore, GameRng, ValueMap};
+use crate::{ActorId, Clock, Context, EntityStore, Rng, ValueMap};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +14,7 @@ pub struct Model {
     /// System clock
     pub time: Clock,
     /// Deterministic RNG
-    pub rng: GameRng,
+    pub rng: Rng,
     /// Actor contexts
     pub actors: IndexMap<ActorId, Context>,
 }
@@ -26,7 +26,7 @@ impl Model {
             entities: EntityStore::new(),
             globals: ValueMap::new(),
             time: Clock::new(),
-            rng: GameRng::new(12345),
+            rng: Rng::new(12345),
             actors: IndexMap::new(),
         }
     }
@@ -37,7 +37,7 @@ impl Model {
             entities: EntityStore::new(),
             globals: ValueMap::new(),
             time: Clock::new(),
-            rng: GameRng::new(seed),
+            rng: Rng::new(seed),
             actors: IndexMap::new(),
         }
     }

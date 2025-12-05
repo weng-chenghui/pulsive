@@ -120,7 +120,7 @@ impl Runtime {
         self.scheduled.sort_by_key(|(tick, _)| *tick);
     }
 
-    /// Advance the game by one tick
+    /// Advance the simulation by one tick
     pub fn tick(&mut self, model: &mut Model) -> UpdateResult {
         // Advance time
         model.advance_tick();
@@ -691,7 +691,7 @@ use crate::journal::Journal;
 
 #[cfg(feature = "journal")]
 impl Runtime {
-    /// Advance the game by one tick, recording to the journal
+    /// Advance the simulation by one tick, recording to the journal
     pub fn tick_with_journal(&mut self, model: &mut Model, journal: &mut Journal) -> UpdateResult {
         // Advance time
         model.advance_tick();

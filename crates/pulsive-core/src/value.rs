@@ -5,7 +5,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// A dynamic value that can represent any game data
+/// A dynamic value that can represent any simulation data
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum Value {
     /// No value / null

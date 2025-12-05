@@ -1,8 +1,8 @@
 //! Actor types for multi-actor reactive systems
 //!
-//! Actors represent any entity that can submit commands to the system:
+//! Actors represent any principal that can submit commands to the system:
 //! - Users in web applications
-//! - Players in games
+//! - Participants in simulations
 //! - Services in microservices
 //! - Automated processes or bots
 

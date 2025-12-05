@@ -8,13 +8,13 @@ use serde::{Deserialize, Serialize};
 /// A deterministic random number generator
 ///
 /// Uses xorshift64 for simplicity and reproducibility.
-/// Never use std::random or other non-deterministic sources in game logic.
+/// Never use std::random or other non-deterministic sources in simulation logic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GameRng {
+pub struct Rng {
     state: u64,
 }
 
-impl GameRng {
+impl Rng {
     /// Create a new RNG with the given seed
     pub fn new(seed: u64) -> Self {
         // Ensure non-zero state (xorshift requires this)
@@ -115,7 +115,7 @@ impl GameRng {
     }
 }
 
-impl Default for GameRng {
+impl Default for Rng {
     fn default() -> Self {
         Self::new(12345)
     }
@@ -127,8 +127,8 @@ mod tests {
 
     #[test]
     fn test_determinism() {
-        let mut rng1 = GameRng::new(42);
-        let mut rng2 = GameRng::new(42);
+        let mut rng1 = Rng::new(42);
+        let mut rng2 = Rng::new(42);
 
         for _ in 0..100 {
             assert_eq!(rng1.next_u64(), rng2.next_u64());
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn test_range() {
-        let mut rng = GameRng::new(42);
+        let mut rng = Rng::new(42);
 
         for _ in 0..100 {
             let f = rng.next_f64();
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn test_weighted_index() {
-        let mut rng = GameRng::new(42);
+        let mut rng = Rng::new(42);
         let weights = [1.0, 2.0, 3.0]; // 1/6, 2/6, 3/6 probability
 
         let mut counts = [0; 3];
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_shuffle() {
-        let mut rng = GameRng::new(42);
+        let mut rng = Rng::new(42);
         let original = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
         let mut shuffled = original.clone();
         rng.shuffle(&mut shuffled);

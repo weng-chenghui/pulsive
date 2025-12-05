@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use crate::models::*;
 use native_db::*;
-use pulsive_core::{Clock, Entity, EntityId, GameRng, Model, ValueMap};
+use pulsive_core::{Clock, Entity, EntityId, Model, Rng, ValueMap};
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -113,7 +113,7 @@ impl Store {
     }
 
     /// Save RNG state.
-    pub fn save_rng(&self, rng: &GameRng) -> Result<()> {
+    pub fn save_rng(&self, rng: &Rng) -> Result<()> {
         let stored = StoredRng::from_rng(rng);
         let rw = self.db.rw_transaction()?;
         rw.upsert(stored)?;
@@ -122,7 +122,7 @@ impl Store {
     }
 
     /// Load RNG state.
-    pub fn load_rng(&self) -> Result<Option<GameRng>> {
+    pub fn load_rng(&self) -> Result<Option<Rng>> {
         let r = self.db.r_transaction()?;
         let stored: Option<StoredRng> = r.get().primary("rng".to_string())?;
         Ok(stored.map(|s| s.to_rng()))

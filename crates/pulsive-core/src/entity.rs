@@ -1,4 +1,4 @@
-//! Entity types for game objects
+//! Entity types for simulation objects
 
 use crate::{DefId, EntityId, Value, ValueMap};
 use indexmap::IndexMap;
@@ -111,7 +111,7 @@ impl Entity {
     }
 }
 
-/// Storage for all entities in the game
+/// Storage for all entities in the system
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct EntityStore {
     /// All entities by ID
