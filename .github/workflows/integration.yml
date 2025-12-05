@@ -34,9 +34,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
       
       - name: Build and run integration tests
-        run: |
-          chmod +x run_tests.sh
-          ./run_tests.sh
+        run: docker compose up --build --abort-on-container-exit --exit-code-from loadtest
       
       - name: Show logs on failure
         if: failure()
