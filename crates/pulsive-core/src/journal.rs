@@ -377,6 +377,100 @@ impl Default for Journal {
     }
 }
 
+// Implement StateHistory trait for Journal
+use crate::state_history::StateHistory;
+
+impl StateHistory for Journal {
+    fn save_state(&mut self, tick: u64, model: &Model) {
+        // Create a snapshot with the given tick
+        let id = SnapshotId::new(self.next_snapshot_id);
+        self.next_snapshot_id += 1;
+
+        let snapshot = Snapshot {
+            id,
+            tick,
+            model: model.clone(),
+        };
+
+        self.snapshots.push(snapshot);
+
+        if self.config.recording_enabled {
+            self.entries.push(JournalEntry::Snapshot {
+                tick,
+                snapshot_id: id,
+            });
+        }
+
+        self.enforce_snapshot_limits();
+    }
+
+    fn get_state(&self, tick: u64) -> Option<&Model> {
+        self.snapshots
+            .iter()
+            .find(|s| s.tick == tick)
+            .map(|s| &s.model)
+    }
+
+    fn get_nearest_before(&self, tick: u64) -> Option<(u64, &Model)> {
+        self.snapshots
+            .iter()
+            .filter(|s| s.tick <= tick)
+            .max_by_key(|s| s.tick)
+            .map(|s| (s.tick, &s.model))
+    }
+
+    fn get_nearest_after(&self, tick: u64) -> Option<(u64, &Model)> {
+        self.snapshots
+            .iter()
+            .filter(|s| s.tick >= tick)
+            .min_by_key(|s| s.tick)
+            .map(|s| (s.tick, &s.model))
+    }
+
+    fn clear_before(&mut self, tick: u64) {
+        self.snapshots.retain(|s| s.tick >= tick);
+        self.entries.retain(|e| {
+            let entry_tick = match e {
+                JournalEntry::Message { tick: t, .. } => *t,
+                JournalEntry::TickBoundary { tick: t } => *t,
+                JournalEntry::Snapshot { tick: t, .. } => *t,
+                JournalEntry::Metadata { tick: t, .. } => *t,
+            };
+            entry_tick >= tick
+        });
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.snapshots.clear();
+        self.current_seq = 0;
+        self.last_recorded_tick = None;
+    }
+
+    fn capacity(&self) -> Option<usize> {
+        // Journal is unbounded (or has configurable limits)
+        if self.config.max_snapshots > 0 {
+            Some(self.config.max_snapshots)
+        } else {
+            None
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    fn tick_range(&self) -> Option<(u64, u64)> {
+        if self.snapshots.is_empty() {
+            return None;
+        }
+
+        let min = self.snapshots.iter().map(|s| s.tick).min().unwrap();
+        let max = self.snapshots.iter().map(|s| s.tick).max().unwrap();
+        Some((min, max))
+    }
+}
+
 /// Statistics about the journal
 #[derive(Debug, Clone)]
 pub struct JournalStats {

@@ -5,6 +5,8 @@ members = [
     "crates/pulsive-script",
     "crates/pulsive-godot",
     "crates/pulsive-journal",
+    "crates/pulsive-netcode",
+    "crates/pulsive-rollback-buffer",
     "examples/simple_economy",
     "examples/typing_game",
     "examples/http_server",
@@ -24,6 +26,8 @@ pulsive-db = { path = "crates/pulsive-db" }
 pulsive-script = { path = "crates/pulsive-script" }
 pulsive-godot = { path = "crates/pulsive-godot" }
 pulsive-journal = { path = "crates/pulsive-journal" }
+pulsive-netcode = { path = "crates/pulsive-netcode" }
+pulsive-rollback-buffer = { path = "crates/pulsive-rollback-buffer" }
 
 # Database
 native_db = "0.8"

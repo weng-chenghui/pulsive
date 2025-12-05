@@ -34,6 +34,7 @@ mod model;
 mod msg;
 mod rng;
 pub mod runtime;
+pub mod state_history;
 pub mod time;
 mod value;
 
@@ -51,6 +52,7 @@ pub use model::Model;
 pub use msg::{Msg, MsgKind};
 pub use rng::GameRng;
 pub use runtime::{EventHandler, Runtime, TickHandler, UpdateResult};
+pub use state_history::{StateHistory, StateInterpolation};
 pub use time::{Clock, Speed, Tick, Timestamp};
 pub use value::{Value, ValueMap};
 

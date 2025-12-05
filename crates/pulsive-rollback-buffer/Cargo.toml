@@ -1,0 +1,13 @@
+[package]
+name = "pulsive-rollback-buffer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Optimized ring buffer for real-time state history and rollback"
+
+[features]
+default = []
+
+[dependencies]
+pulsive-core = { workspace = true }
+
