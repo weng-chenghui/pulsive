@@ -9,5 +9,5 @@ description = "Typing speed game demonstrating pulsive reactive architecture"
 pulsive-core = { workspace = true }
 serde = { workspace = true }
 ron = { workspace = true }
-crossterm = "0.28"
+crossterm = "0.29"
 
