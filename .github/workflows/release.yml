@@ -28,7 +28,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact: pulsive_godot.dll
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -51,7 +51,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       
       - name: Download all artifacts
         uses: actions/download-artifact@v6
