@@ -37,7 +37,7 @@ pub fn variant_to_value(variant: &Variant) -> Value {
             Value::List(list)
         }
         VariantType::DICTIONARY => {
-            let dict = variant.to::<Dictionary>();
+            let dict = variant.to::<VarDictionary>();
             Value::Map(dict_to_value_map(&dict))
         }
         _ => {
@@ -47,17 +47,17 @@ pub fn variant_to_value(variant: &Variant) -> Value {
     }
 }
 
-/// Convert a ValueMap to a Godot Dictionary
-pub fn value_map_to_dict(map: &ValueMap) -> Dictionary {
-    let mut dict = Dictionary::new();
+/// Convert a ValueMap to a Godot VarDictionary
+pub fn value_map_to_dict(map: &ValueMap) -> VarDictionary {
+    let mut dict = VarDictionary::new();
     for (key, value) in map {
         dict.set(key.clone(), value_to_variant(value));
     }
     dict
 }
 
-/// Convert a Godot Dictionary to a ValueMap
-pub fn dict_to_value_map(dict: &Dictionary) -> ValueMap {
+/// Convert a Godot VarDictionary to a ValueMap
+pub fn dict_to_value_map(dict: &VarDictionary) -> ValueMap {
     let mut map = ValueMap::new();
     for (key, value) in dict.iter_shared() {
         let key_str = key.to::<GString>().to_string();

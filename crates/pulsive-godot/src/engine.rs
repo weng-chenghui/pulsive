@@ -150,14 +150,14 @@ impl PulsiveEngine {
         }
     }
 
-    /// Get all properties of an entity as a Dictionary
+    /// Get all properties of an entity as a VarDictionary
     #[func]
-    fn get_entity(&self, entity_id: i64) -> Dictionary {
+    fn get_entity(&self, entity_id: i64) -> VarDictionary {
         let id = pulsive_core::EntityId::new(entity_id as u64);
         if let Some(entity) = self.model.entities.get(id) {
             return value_map_to_dict(&entity.properties);
         }
-        Dictionary::new()
+        VarDictionary::new()
     }
 
     /// Delete an entity
@@ -209,7 +209,7 @@ impl PulsiveEngine {
     /// Get the current date as a string
     #[func]
     fn get_date_string(&self) -> GString {
-        GString::from(self.model.time.current_date().to_string())
+        GString::from(self.model.time.current_date().to_string().as_str())
     }
 
     /// Set the processing speed
@@ -257,7 +257,7 @@ impl PulsiveEngine {
 
     /// Advance the simulation by one tick
     #[func]
-    fn tick(&mut self) -> Dictionary {
+    fn tick(&mut self) -> VarDictionary {
         let result = self.runtime.tick(&mut self.model);
         self.update_result_to_dict(&result)
     }
@@ -268,8 +268,8 @@ impl PulsiveEngine {
         &mut self,
         action_type: GString,
         target_id: i64,
-        params: Dictionary,
-    ) -> Dictionary {
+        params: VarDictionary,
+    ) -> VarDictionary {
         let target = if target_id >= 0 {
             EntityRef::Entity(pulsive_core::EntityId::new(target_id as u64))
         } else {
@@ -294,7 +294,12 @@ impl PulsiveEngine {
 
     /// Send an event
     #[func]
-    fn emit_event(&mut self, event_id: GString, target_id: i64, params: Dictionary) -> Dictionary {
+    fn emit_event(
+        &mut self,
+        event_id: GString,
+        target_id: i64,
+        params: VarDictionary,
+    ) -> VarDictionary {
         let target = if target_id >= 0 {
             EntityRef::Entity(pulsive_core::EntityId::new(target_id as u64))
         } else {
@@ -348,8 +353,8 @@ impl PulsiveEngine {
 
     // === Helpers ===
 
-    fn update_result_to_dict(&self, result: &UpdateResult) -> Dictionary {
-        let mut dict = Dictionary::new();
+    fn update_result_to_dict(&self, result: &UpdateResult) -> VarDictionary {
+        let mut dict = VarDictionary::new();
 
         // Spawned entities
         let spawned: Vec<i64> = result
@@ -372,7 +377,7 @@ impl PulsiveEngine {
         // Logs
         let mut logs = Array::new();
         for (level, message) in &result.effect_result.logs {
-            let mut log_dict = Dictionary::new();
+            let mut log_dict = VarDictionary::new();
             log_dict.set("level", format!("{:?}", level).to_variant());
             log_dict.set("message", message.to_variant());
             logs.push(&log_dict.to_variant());
@@ -382,7 +387,7 @@ impl PulsiveEngine {
         // Notifications
         let mut notifications = Array::new();
         for notification in &result.effect_result.notifications {
-            let mut notif_dict = Dictionary::new();
+            let mut notif_dict = VarDictionary::new();
             notif_dict.set("kind", notification.kind.as_str().to_variant());
             notif_dict.set("title", notification.title.to_variant());
             notif_dict.set("message", notification.message.to_variant());
