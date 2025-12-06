@@ -247,7 +247,51 @@ Before considering a new feature or demo complete:
 
 ---
 
-## 7. AGENTS.md and .cursorrules Sync
+## 7. Feature Branches and Pull Requests
+
+**Work that closes GitHub issues should be done in feature branches with pull requests.**
+
+### Workflow
+
+1. **Create a feature branch** from `main`:
+   ```bash
+   git checkout -b feat/<feature-name>
+   # or for fixes:
+   git checkout -b fix/<issue-description>
+   ```
+
+2. **Implement the changes** on the feature branch
+
+3. **Push and create a PR**:
+   ```bash
+   git push origin feat/<feature-name>
+   gh pr create --title "feat: <description>" --body "Closes #<issue-number>"
+   ```
+
+### Branch Naming Convention
+
+- `feat/<name>` - New features
+- `fix/<name>` - Bug fixes
+- `refactor/<name>` - Code refactoring
+- `docs/<name>` - Documentation changes
+- `chore/<name>` - Maintenance tasks
+
+### PR Requirements
+
+- Link the related issue using `Closes #<number>` in the PR description
+- Ensure all tests pass before requesting review
+- Keep PRs focused on a single issue/feature when possible
+
+### Exceptions
+
+Direct commits to `main` are acceptable for:
+- Typo fixes in documentation
+- Emergency hotfixes (with immediate follow-up PR for review)
+- Automated sync operations (e.g., `.cursorrules` sync)
+
+---
+
+## 8. AGENTS.md and .cursorrules Sync
 
 **`AGENTS.md` is the source of truth. `.cursorrules` is automatically synced as a mirror.**
 
@@ -286,6 +330,7 @@ make install-hooks  # Installs both pre-commit and pre-push hooks
 |------|--------|
 | Commit changes | Sign with `-S` flag, fallback to manual commands |
 | Before pushing | Run `make check` or `make pre-push` |
+| Closing an issue | Use feature branch + PR (not direct to main) |
 | Temporary script | Create `YYYY-MM-DD_name/` in `.scripts/` with README |
 | Big feature | Create RFC issue on GitHub first |
 | New shared code | Use traits and interface-based design |
