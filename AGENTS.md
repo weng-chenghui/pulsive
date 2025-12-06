@@ -262,11 +262,34 @@ Before considering a new feature or demo complete:
 
 2. **Implement the changes** on the feature branch
 
-3. **Push and create a PR**:
+3. **Push the branch and immediately create a PR using `gh`**:
    ```bash
    git push origin feat/<feature-name>
    gh pr create --title "feat: <description>" --body "Closes #<issue-number>"
    ```
+
+### PR Creation Requirement
+
+**Always create a PR immediately after pushing a feature branch.** Use the GitHub CLI (`gh`) to create PRs programmatically:
+
+```bash
+# Basic PR creation
+gh pr create --title "<type>: <description>" --body "Closes #<issue-number>"
+
+# With more details
+gh pr create \
+  --title "feat: <description>" \
+  --body "## Summary
+<brief description>
+
+## Changes
+- Change 1
+- Change 2
+
+Closes #<issue-number>"
+```
+
+Do not leave feature branches without associated PRs.
 
 ### Branch Naming Convention
 
@@ -330,7 +353,7 @@ make install-hooks  # Installs both pre-commit and pre-push hooks
 |------|--------|
 | Commit changes | Sign with `-S` flag, fallback to manual commands |
 | Before pushing | Run `make check` or `make pre-push` |
-| Closing an issue | Use feature branch + PR (not direct to main) |
+| Closing an issue | Feature branch + `gh pr create` (not direct to main) |
 | Temporary script | Create `YYYY-MM-DD_name/` in `.scripts/` with README |
 | Big feature | Create RFC issue on GitHub first |
 | New shared code | Use traits and interface-based design |
