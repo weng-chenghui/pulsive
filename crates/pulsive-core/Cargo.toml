@@ -13,3 +13,6 @@ journal = []  # Enable message recording and state snapshots for audit/replay/de
 serde = { workspace = true }
 thiserror = { workspace = true }
 indexmap = { workspace = true }
+
+[dev-dependencies]
+ron = { workspace = true }

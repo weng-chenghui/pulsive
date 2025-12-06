@@ -37,6 +37,7 @@ pub mod runtime;
 pub mod state_history;
 pub mod time;
 mod value;
+pub mod write_set;
 
 #[cfg(feature = "journal")]
 pub mod journal;
@@ -55,6 +56,7 @@ pub use runtime::{EventHandler, Runtime, TickHandler, UpdateResult};
 pub use state_history::{StateHistory, StateInterpolation};
 pub use time::{Clock, Speed, Tick, Timestamp};
 pub use value::{Value, ValueMap};
+pub use write_set::{PendingWrite, WriteSet, WriteSetResult};
 
 #[cfg(feature = "journal")]
 pub use journal::{Journal, JournalConfig, JournalEntry, JournalStats, Snapshot, SnapshotId};
