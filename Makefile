@@ -9,7 +9,7 @@ export RUSTDOCFLAGS := -Dwarnings
 # Exclude pulsive-godot (requires special setup) by default
 WORKSPACE_EXCLUDE := --exclude pulsive-godot
 
-.PHONY: all check fmt clippy build test docs clean help pre-push godot
+.PHONY: all check fmt clippy build test docs clean help pre-push godot sync-agents
 
 # Default target - run all checks (same as pre-push)
 all: check
@@ -72,13 +72,21 @@ quick:
 	cargo build --workspace $(WORKSPACE_EXCLUDE)
 	cargo test --workspace $(WORKSPACE_EXCLUDE)
 
+# Sync AGENTS.md to .cursorrules
+sync-agents:
+	@echo "📋 Syncing AGENTS.md to .cursorrules..."
+	@cp AGENTS.md .cursorrules
+	@echo "✅ .cursorrules synced!"
+
 # Install git hooks
 install-hooks:
 	@echo "🔗 Installing git hooks..."
 	@mkdir -p .git/hooks
+	@cp scripts/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
 	@cp scripts/pre-push .git/hooks/pre-push
 	@chmod +x .git/hooks/pre-push
-	@echo "✅ Git hooks installed!"
+	@echo "✅ Git hooks installed (pre-commit + pre-push)!"
 
 # Show help
 help:
@@ -99,6 +107,7 @@ help:
 	@echo "  integration  Run Docker integration tests"
 	@echo "  clean        Clean build artifacts"
 	@echo "  quick        Quick build + test (skip lints)"
-	@echo "  install-hooks Install git pre-push hook"
+	@echo "  sync-agents  Sync AGENTS.md to .cursorrules"
+	@echo "  install-hooks Install git hooks (pre-commit + pre-push)"
 	@echo "  help         Show this help"
 

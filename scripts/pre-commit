@@ -1,0 +1,26 @@
+#!/bin/bash
+# Git pre-commit hook
+# Syncs AGENTS.md to .cursorrules if AGENTS.md has changed
+
+set -e
+
+# Get the directory where the script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Navigate to repo root (two levels up from .git/hooks)
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+cd "$REPO_ROOT"
+
+# Check if AGENTS.md is staged for commit
+if git diff --cached --name-only | grep -q "^AGENTS.md$"; then
+    echo "📋 AGENTS.md changed, syncing to .cursorrules..."
+    
+    # Copy AGENTS.md to .cursorrules
+    cp AGENTS.md .cursorrules
+    
+    # Stage the updated .cursorrules
+    git add .cursorrules
+    
+    echo "✅ .cursorrules synced and staged!"
+fi
+
