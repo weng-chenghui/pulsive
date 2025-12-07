@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/pulsive-core",
+    "crates/pulsive-hub",
     "crates/pulsive-db",
     "crates/pulsive-script",
     "crates/pulsive-godot",
@@ -22,6 +23,7 @@ repository = "https://github.com/user/pulsive"
 [workspace.dependencies]
 # Internal crates
 pulsive-core = { path = "crates/pulsive-core" }
+pulsive-hub = { path = "crates/pulsive-hub" }
 pulsive-db = { path = "crates/pulsive-db" }
 pulsive-script = { path = "crates/pulsive-script" }
 pulsive-godot = { path = "crates/pulsive-godot" }
