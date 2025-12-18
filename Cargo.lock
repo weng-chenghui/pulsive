@@ -1170,6 +1170,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulsive-hub"
+version = "0.1.0"
+dependencies = [
+ "pulsive-core",
+ "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "pulsive-journal"
 version = "0.1.0"
 dependencies = [
