@@ -147,9 +147,14 @@ impl WriteSet {
         self.writes.push(write);
     }
 
-    /// Extend this WriteSet with writes from another
+    /// Extend this WriteSet with writes from another (consuming)
     pub fn extend(&mut self, other: WriteSet) {
         self.writes.extend(other.writes);
+    }
+
+    /// Extend this WriteSet with writes from another (non-consuming, clones writes)
+    pub fn extend_from(&mut self, other: &WriteSet) {
+        self.writes.extend(other.writes.iter().cloned());
     }
 
     /// Get the number of pending writes
@@ -182,11 +187,20 @@ impl WriteSet {
         self.writes.clear();
     }
 
-    /// Merge multiple WriteSets into one
+    /// Merge multiple WriteSets into one (consuming)
     pub fn merge(write_sets: Vec<WriteSet>) -> WriteSet {
         let mut merged = WriteSet::new();
         for ws in write_sets {
             merged.extend(ws);
+        }
+        merged
+    }
+
+    /// Merge multiple WriteSets into one (non-consuming, clones writes)
+    pub fn merge_from(write_sets: &[WriteSet]) -> WriteSet {
+        let mut merged = WriteSet::new();
+        for ws in write_sets {
+            merged.extend_from(ws);
         }
         merged
     }
@@ -248,6 +262,49 @@ mod tests {
 
         let merged = WriteSet::merge(vec![ws1, ws2]);
         assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn test_write_set_extend_from() {
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "a".to_string(),
+            value: Value::Float(1.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "b".to_string(),
+            value: Value::Float(2.0),
+        });
+
+        // Non-consuming extend
+        ws1.extend_from(&ws2);
+        assert_eq!(ws1.len(), 2);
+        // ws2 is still usable
+        assert_eq!(ws2.len(), 1);
+    }
+
+    #[test]
+    fn test_write_set_merge_from() {
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "a".to_string(),
+            value: Value::Float(1.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "b".to_string(),
+            value: Value::Float(2.0),
+        });
+
+        // Non-consuming merge
+        let merged = WriteSet::merge_from(&[ws1.clone(), ws2.clone()]);
+        assert_eq!(merged.len(), 2);
+        // Originals are still usable
+        assert_eq!(ws1.len(), 1);
+        assert_eq!(ws2.len(), 1);
     }
 
     #[test]

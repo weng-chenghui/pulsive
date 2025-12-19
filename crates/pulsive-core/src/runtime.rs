@@ -605,6 +605,31 @@ impl Runtime {
     // Deferred Write Support (for pulsive-hub integration)
     // ========================================================================
 
+    /// Helper to create an EvalContext with optional target entity resolution
+    ///
+    /// This reduces code duplication when creating evaluation contexts.
+    fn make_eval_context<'a>(
+        model: &'a mut Model,
+        target: &EntityRef,
+        params: &'a ValueMap,
+    ) -> EvalContext<'a> {
+        let target_entity = model.entities.resolve(target);
+        let mut ctx = EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+        if let Some(entity) = target_entity {
+            ctx = ctx.with_target(entity);
+        }
+        ctx
+    }
+
+    /// Log an expression evaluation error to EffectResult
+    fn log_eval_error(result: &mut EffectResult, context: &str, error: &crate::Error) {
+        use crate::effect::LogLevel;
+        result.logs.push((
+            LogLevel::Warn,
+            format!("Effect eval error in {}: {}", context, error),
+        ));
+    }
+
     /// Collect writes from an effect into a WriteSet without mutating the model
     ///
     /// This is the deferred-write version of `execute_effect`. It evaluates expressions
@@ -638,21 +663,18 @@ impl Runtime {
 
         match effect {
             Effect::SetProperty { property, value } => {
-                // Evaluate with target entity context
-                let target_entity = model.entities.resolve(target);
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                if let Some(entity) = target_entity {
-                    ctx = ctx.with_target(entity);
-                }
-                let eval_result = value.eval(&mut ctx);
-
-                if let (Ok(v), Some(entity_id)) = (eval_result, target.as_entity_id()) {
-                    writes.push(PendingWrite::SetProperty {
-                        entity_id,
-                        key: property.clone(),
-                        value: v,
-                    });
+                let mut ctx = Self::make_eval_context(model, target, params);
+                match value.eval(&mut ctx) {
+                    Ok(v) => {
+                        if let Some(entity_id) = target.as_entity_id() {
+                            writes.push(PendingWrite::SetProperty {
+                                entity_id,
+                                key: property.clone(),
+                                value: v,
+                            });
+                        }
+                    }
+                    Err(e) => Self::log_eval_error(result, "SetProperty", &e),
                 }
             }
             Effect::ModifyProperty {
@@ -660,34 +682,33 @@ impl Runtime {
                 op,
                 value,
             } => {
-                // Evaluate with target entity context
-                let target_entity = model.entities.resolve(target);
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                if let Some(entity) = target_entity {
-                    ctx = ctx.with_target(entity);
-                }
-                let eval_result = value.eval(&mut ctx);
-
-                if let (Ok(v), Some(entity_id)) = (eval_result, target.as_entity_id()) {
-                    if let Some(operand) = v.as_float() {
-                        writes.push(PendingWrite::ModifyProperty {
-                            entity_id,
-                            key: property.clone(),
-                            op: op.clone(),
-                            value: operand,
-                        });
+                let mut ctx = Self::make_eval_context(model, target, params);
+                match value.eval(&mut ctx) {
+                    Ok(v) => {
+                        if let (Some(operand), Some(entity_id)) =
+                            (v.as_float(), target.as_entity_id())
+                        {
+                            writes.push(PendingWrite::ModifyProperty {
+                                entity_id,
+                                key: property.clone(),
+                                op: op.clone(),
+                                value: operand,
+                            });
+                        }
                     }
+                    Err(e) => Self::log_eval_error(result, "ModifyProperty", &e),
                 }
             }
             Effect::SetGlobal { property, value } => {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                if let Ok(v) = value.eval(&mut ctx) {
-                    writes.push(PendingWrite::SetGlobal {
-                        key: property.clone(),
-                        value: v,
-                    });
+                let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                match value.eval(&mut ctx) {
+                    Ok(v) => {
+                        writes.push(PendingWrite::SetGlobal {
+                            key: property.clone(),
+                            value: v,
+                        });
+                    }
+                    Err(e) => Self::log_eval_error(result, "SetGlobal", &e),
                 }
             }
             Effect::ModifyGlobal {
@@ -695,16 +716,18 @@ impl Runtime {
                 op,
                 value,
             } => {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                if let Ok(v) = value.eval(&mut ctx) {
-                    if let Some(operand) = v.as_float() {
-                        writes.push(PendingWrite::ModifyGlobal {
-                            key: property.clone(),
-                            op: op.clone(),
-                            value: operand,
-                        });
+                let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                match value.eval(&mut ctx) {
+                    Ok(v) => {
+                        if let Some(operand) = v.as_float() {
+                            writes.push(PendingWrite::ModifyGlobal {
+                                key: property.clone(),
+                                op: op.clone(),
+                                value: operand,
+                            });
+                        }
                     }
+                    Err(e) => Self::log_eval_error(result, "ModifyGlobal", &e),
                 }
             }
             Effect::AddFlag(flag) => {
@@ -727,10 +750,12 @@ impl Runtime {
                 // Evaluate all property expressions
                 let mut evaluated_props = ValueMap::new();
                 for (key, value_expr) in properties {
-                    let mut ctx =
-                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                    if let Ok(v) = value_expr.eval(&mut ctx) {
-                        evaluated_props.insert(key.clone(), v);
+                    let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                    match value_expr.eval(&mut ctx) {
+                        Ok(v) => {
+                            evaluated_props.insert(key.clone(), v);
+                        }
+                        Err(e) => Self::log_eval_error(result, &format!("SpawnEntity.{}", key), &e),
                     }
                 }
 
@@ -757,10 +782,12 @@ impl Runtime {
                 // Event emission goes to EffectResult, not WriteSet
                 let mut evaluated_params = ValueMap::new();
                 for (key, expr) in event_params {
-                    let mut ctx =
-                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                    if let Ok(v) = expr.eval(&mut ctx) {
-                        evaluated_params.insert(key.clone(), v);
+                    let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                    match expr.eval(&mut ctx) {
+                        Ok(v) => {
+                            evaluated_params.insert(key.clone(), v);
+                        }
+                        Err(e) => Self::log_eval_error(result, &format!("EmitEvent.{}", key), &e),
                     }
                 }
                 result
@@ -774,29 +801,34 @@ impl Runtime {
                 params: event_params,
             } => {
                 // Scheduled events go to EffectResult, not WriteSet
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                if let Ok(delay_val) = delay_ticks.eval(&mut ctx) {
-                    if let Some(delay) = delay_val.as_int() {
-                        let mut evaluated_params = ValueMap::new();
-                        for (key, expr) in event_params {
-                            let mut ctx = EvalContext::new(
-                                &model.entities,
-                                &model.globals,
-                                params,
-                                &mut model.rng,
-                            );
-                            if let Ok(v) = expr.eval(&mut ctx) {
-                                evaluated_params.insert(key.clone(), v);
+                let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                match delay_ticks.eval(&mut ctx) {
+                    Ok(delay_val) => {
+                        if let Some(delay) = delay_val.as_int() {
+                            let mut evaluated_params = ValueMap::new();
+                            for (key, expr) in event_params {
+                                let mut ctx =
+                                    Self::make_eval_context(model, &EntityRef::Global, params);
+                                match expr.eval(&mut ctx) {
+                                    Ok(v) => {
+                                        evaluated_params.insert(key.clone(), v);
+                                    }
+                                    Err(e) => Self::log_eval_error(
+                                        result,
+                                        &format!("ScheduleEvent.{}", key),
+                                        &e,
+                                    ),
+                                }
                             }
+                            result.scheduled_events.push((
+                                event.clone(),
+                                event_target.clone(),
+                                delay as u64,
+                                evaluated_params,
+                            ));
                         }
-                        result.scheduled_events.push((
-                            event.clone(),
-                            event_target.clone(),
-                            delay as u64,
-                            evaluated_params,
-                        ));
                     }
+                    Err(e) => Self::log_eval_error(result, "ScheduleEvent.delay", &e),
                 }
             }
             Effect::If {
@@ -804,18 +836,16 @@ impl Runtime {
                 then_effects,
                 else_effects,
             } => {
-                let target_entity = model.entities.resolve(target);
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                if let Some(entity) = target_entity {
-                    ctx = ctx.with_target(entity);
-                }
+                let mut ctx = Self::make_eval_context(model, target, params);
                 let cond_result = condition.eval(&mut ctx);
 
-                let effects = if cond_result.map(|v| v.is_truthy()).unwrap_or(false) {
-                    then_effects
-                } else {
-                    else_effects
+                let effects = match cond_result {
+                    Ok(v) if v.is_truthy() => then_effects,
+                    Ok(_) => else_effects,
+                    Err(e) => {
+                        Self::log_eval_error(result, "If.condition", &e);
+                        else_effects // Default to else branch on error
+                    }
                 };
 
                 for eff in effects {
@@ -837,27 +867,21 @@ impl Runtime {
                 let entity_ids: Vec<_> = model.entities.by_kind(kind).map(|e| e.id).collect();
 
                 for entity_id in entity_ids {
+                    let entity_target = EntityRef::Entity(entity_id);
+
                     // Check filter
                     if let Some(filter_expr) = filter {
-                        let entity = model.entities.get(entity_id);
-                        let mut ctx = EvalContext::new(
-                            &model.entities,
-                            &model.globals,
-                            params,
-                            &mut model.rng,
-                        );
-                        if let Some(e) = entity {
-                            ctx = ctx.with_target(e);
-                        }
-
+                        let mut ctx = Self::make_eval_context(model, &entity_target, params);
                         match filter_expr.eval(&mut ctx) {
                             Ok(v) if !v.is_truthy() => continue,
-                            Err(_) => continue,
-                            _ => {}
+                            Ok(_) => {} // Passes filter
+                            Err(e) => {
+                                Self::log_eval_error(result, "ForEachEntity.filter", &e);
+                                continue; // Skip this entity on error
+                            }
                         }
                     }
 
-                    let entity_target = EntityRef::Entity(entity_id);
                     for eff in effects {
                         let child_writes =
                             self.collect_effect(model, eff, &entity_target, params, result);
@@ -867,18 +891,19 @@ impl Runtime {
             }
             Effect::RandomChoice { choices } => {
                 let mut weights = Vec::new();
-                for (weight_expr, _) in choices {
-                    let target_entity = model.entities.resolve(target);
-                    let mut ctx =
-                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                    if let Some(entity) = target_entity {
-                        ctx = ctx.with_target(entity);
-                    }
-                    let weight = weight_expr
-                        .eval(&mut ctx)
-                        .ok()
-                        .and_then(|v| v.as_float())
-                        .unwrap_or(0.0);
+                for (i, (weight_expr, _)) in choices.iter().enumerate() {
+                    let mut ctx = Self::make_eval_context(model, target, params);
+                    let weight = match weight_expr.eval(&mut ctx) {
+                        Ok(v) => v.as_float().unwrap_or(0.0),
+                        Err(e) => {
+                            Self::log_eval_error(
+                                result,
+                                &format!("RandomChoice.weight[{}]", i),
+                                &e,
+                            );
+                            0.0
+                        }
+                    };
                     weights.push(weight);
                 }
 
@@ -894,10 +919,10 @@ impl Runtime {
             }
             Effect::Log { level, message } => {
                 // Logs go to EffectResult, not WriteSet
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                if let Ok(v) = message.eval(&mut ctx) {
-                    result.logs.push((*level, format!("{}", v)));
+                let mut ctx = Self::make_eval_context(model, target, params);
+                match message.eval(&mut ctx) {
+                    Ok(v) => result.logs.push((*level, format!("{}", v))),
+                    Err(e) => Self::log_eval_error(result, "Log.message", &e),
                 }
             }
             Effect::Notify {
@@ -907,16 +932,22 @@ impl Runtime {
                 target: notify_target,
             } => {
                 // Notifications go to EffectResult, not WriteSet
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
-                let title_str = title
-                    .eval(&mut ctx)
-                    .map(|v| format!("{}", v))
-                    .unwrap_or_default();
-                let msg_str = message
-                    .eval(&mut ctx)
-                    .map(|v| format!("{}", v))
-                    .unwrap_or_default();
+                let mut ctx = Self::make_eval_context(model, target, params);
+                let title_str = match title.eval(&mut ctx) {
+                    Ok(v) => format!("{}", v),
+                    Err(e) => {
+                        Self::log_eval_error(result, "Notify.title", &e);
+                        String::new()
+                    }
+                };
+                let mut ctx = Self::make_eval_context(model, target, params);
+                let msg_str = match message.eval(&mut ctx) {
+                    Ok(v) => format!("{}", v),
+                    Err(e) => {
+                        Self::log_eval_error(result, "Notify.message", &e);
+                        String::new()
+                    }
+                };
 
                 result.notifications.push(crate::effect::Notification {
                     kind: kind.clone(),
