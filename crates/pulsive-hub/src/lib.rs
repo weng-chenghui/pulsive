@@ -41,8 +41,8 @@ mod tick_sync;
 pub use commit::{apply, apply_batch};
 pub use conflict::{
     default_conflict_filter, detect_conflicts, detect_conflicts_filtered, resolve_conflicts,
-    Conflict, ConflictKind, ConflictReport, ConflictResolver, ResolutionResult, ResolutionStrategy,
-    ResolvedConflict, WriteTarget,
+    Conflict, ConflictReport, ConflictResolver, ConflictTarget, ConflictType, ResolutionResult,
+    ResolutionStrategy, ResolvedConflict,
 };
 pub use core::{Core, CoreId};
 pub use error::{Error, Result};
