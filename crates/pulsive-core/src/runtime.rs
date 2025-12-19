@@ -223,23 +223,19 @@ impl Runtime {
     ) {
         // If handler targets a specific entity kind, run for each
         if let Some(kind) = &handler.target_kind {
-            let entity_ids: Vec<_> = model.entities.by_kind(kind).map(|e| e.id).collect();
+            let entity_ids: Vec<_> = model.entities().by_kind(kind).map(|e| e.id).collect();
 
             for entity_id in entity_ids {
-                let entity = model.entities.get(entity_id);
+                let entity = model.entities().get(entity_id);
                 if entity.is_none() {
                     continue;
                 }
 
                 // Check condition
                 if let Some(condition) = &handler.condition {
-                    let mut ctx = EvalContext::new(
-                        &model.entities,
-                        &model.globals,
-                        &msg.params,
-                        &mut model.rng,
-                    );
-                    if let Some(entity) = model.entities.get(entity_id) {
+                    let (entities, globals, rng) = model.eval_refs();
+                    let mut ctx = EvalContext::new(entities, globals, &msg.params, rng);
+                    if let Some(entity) = entities.get(entity_id) {
                         ctx = ctx.with_target(entity);
                     }
 
@@ -265,8 +261,8 @@ impl Runtime {
         } else {
             // No target kind - run once globally
             if let Some(condition) = &handler.condition {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, &msg.params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let mut ctx = EvalContext::new(entities, globals, &msg.params, rng);
 
                 match condition.eval(&mut ctx) {
                     Ok(v) if !v.is_truthy() => return,
@@ -297,9 +293,9 @@ impl Runtime {
     ) {
         // Check condition
         if let Some(condition) = &handler.condition {
-            let target_entity = model.entities.resolve(&msg.target);
-            let mut ctx =
-                EvalContext::new(&model.entities, &model.globals, &msg.params, &mut model.rng);
+            let (entities, globals, rng) = model.eval_refs();
+            let target_entity = entities.resolve(&msg.target);
+            let mut ctx = EvalContext::new(entities, globals, &msg.params, rng);
             if let Some(entity) = target_entity {
                 ctx = ctx.with_target(entity);
             }
@@ -336,15 +332,17 @@ impl Runtime {
         match effect {
             Effect::SetProperty { property, value } => {
                 // Evaluate with target entity context
-                let target_entity = model.entities.resolve(target);
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let target_entity = entities.resolve(target);
+                let mut ctx = EvalContext::new(entities, globals, params, rng);
                 if let Some(entity) = target_entity {
                     ctx = ctx.with_target(entity);
                 }
                 let eval_result = value.eval(&mut ctx);
 
-                if let (Ok(v), Some(entity)) = (eval_result, model.entities.resolve_mut(target)) {
+                if let (Ok(v), Some(entity)) =
+                    (eval_result, model.entities_mut().resolve_mut(target))
+                {
                     entity.set(property.clone(), v);
                 }
             }
@@ -354,15 +352,17 @@ impl Runtime {
                 value,
             } => {
                 // Evaluate with target entity context
-                let target_entity = model.entities.resolve(target);
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let target_entity = entities.resolve(target);
+                let mut ctx = EvalContext::new(entities, globals, params, rng);
                 if let Some(entity) = target_entity {
                     ctx = ctx.with_target(entity);
                 }
                 let eval_result = value.eval(&mut ctx);
 
-                if let (Ok(v), Some(entity)) = (eval_result, model.entities.resolve_mut(target)) {
+                if let (Ok(v), Some(entity)) =
+                    (eval_result, model.entities_mut().resolve_mut(target))
+                {
                     if let Some(operand) = v.as_float() {
                         let current = entity.get_number(property).unwrap_or(0.0);
                         let new_value = op.apply(current, operand);
@@ -371,10 +371,10 @@ impl Runtime {
                 }
             }
             Effect::SetGlobal { property, value } => {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let mut ctx = EvalContext::new(entities, globals, params, rng);
                 if let Ok(v) = value.eval(&mut ctx) {
-                    model.globals.insert(property.clone(), v);
+                    model.globals_mut().insert(property.clone(), v);
                 }
             }
             Effect::ModifyGlobal {
@@ -382,42 +382,41 @@ impl Runtime {
                 op,
                 value,
             } => {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let mut ctx = EvalContext::new(entities, globals, params, rng);
                 if let Ok(v) = value.eval(&mut ctx) {
                     if let Some(operand) = v.as_float() {
-                        let current = model
-                            .globals
+                        let current = globals
                             .get(property)
                             .and_then(|v| v.as_float())
                             .unwrap_or(0.0);
                         let new_value = op.apply(current, operand);
                         model
-                            .globals
+                            .globals_mut()
                             .insert(property.clone(), Value::Float(new_value));
                     }
                 }
             }
             Effect::AddFlag(flag) => {
-                if let Some(entity) = model.entities.resolve_mut(target) {
+                if let Some(entity) = model.entities_mut().resolve_mut(target) {
                     entity.add_flag(flag.clone());
                 }
             }
             Effect::RemoveFlag(flag) => {
-                if let Some(entity) = model.entities.resolve_mut(target) {
+                if let Some(entity) = model.entities_mut().resolve_mut(target) {
                     entity.remove_flag(flag);
                 }
             }
             Effect::SpawnEntity { kind, properties } => {
-                let entity = model.entities.create(kind.clone());
+                let entity = model.entities_mut().create(kind.clone());
                 let entity_id = entity.id;
 
                 // Set properties
                 for (key, value_expr) in properties {
-                    let mut ctx =
-                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                    let (entities, globals, rng) = model.eval_refs();
+                    let mut ctx = EvalContext::new(entities, globals, params, rng);
                     if let Ok(v) = value_expr.eval(&mut ctx) {
-                        if let Some(entity) = model.entities.get_mut(entity_id) {
+                        if let Some(entity) = model.entities_mut().get_mut(entity_id) {
                             entity.set(key.clone(), v);
                         }
                     }
@@ -427,13 +426,13 @@ impl Runtime {
             }
             Effect::DestroyTarget => {
                 if let Some(id) = target.as_entity_id() {
-                    model.entities.remove(id);
+                    model.entities_mut().remove(id);
                     result.destroyed.push(id);
                 }
             }
             Effect::DestroyEntity(entity_ref) => {
                 if let Some(id) = entity_ref.as_entity_id() {
-                    model.entities.remove(id);
+                    model.entities_mut().remove(id);
                     result.destroyed.push(id);
                 }
             }
@@ -444,8 +443,8 @@ impl Runtime {
             } => {
                 let mut evaluated_params = ValueMap::new();
                 for (key, expr) in event_params {
-                    let mut ctx =
-                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                    let (entities, globals, rng) = model.eval_refs();
+                    let mut ctx = EvalContext::new(entities, globals, params, rng);
                     if let Ok(v) = expr.eval(&mut ctx) {
                         evaluated_params.insert(key.clone(), v);
                     }
@@ -460,18 +459,14 @@ impl Runtime {
                 delay_ticks,
                 params: event_params,
             } => {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let mut ctx = EvalContext::new(entities, globals, params, rng);
                 if let Ok(delay_val) = delay_ticks.eval(&mut ctx) {
                     if let Some(delay) = delay_val.as_int() {
                         let mut evaluated_params = ValueMap::new();
                         for (key, expr) in event_params {
-                            let mut ctx = EvalContext::new(
-                                &model.entities,
-                                &model.globals,
-                                params,
-                                &mut model.rng,
-                            );
+                            let (entities, globals, rng) = model.eval_refs();
+                            let mut ctx = EvalContext::new(entities, globals, params, rng);
                             if let Ok(v) = expr.eval(&mut ctx) {
                                 evaluated_params.insert(key.clone(), v);
                             }
@@ -490,8 +485,8 @@ impl Runtime {
                 then_effects,
                 else_effects,
             } => {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let mut ctx = EvalContext::new(entities, globals, params, rng);
                 let cond_result = condition.eval(&mut ctx);
 
                 let effects = if cond_result.map(|v| v.is_truthy()).unwrap_or(false) {
@@ -514,18 +509,14 @@ impl Runtime {
                 filter,
                 effects,
             } => {
-                let entity_ids: Vec<_> = model.entities.by_kind(kind).map(|e| e.id).collect();
+                let entity_ids: Vec<_> = model.entities().by_kind(kind).map(|e| e.id).collect();
 
                 for entity_id in entity_ids {
                     // Check filter
                     if let Some(filter_expr) = filter {
-                        let entity = model.entities.get(entity_id);
-                        let mut ctx = EvalContext::new(
-                            &model.entities,
-                            &model.globals,
-                            params,
-                            &mut model.rng,
-                        );
+                        let (entities, globals, rng) = model.eval_refs();
+                        let entity = entities.get(entity_id);
+                        let mut ctx = EvalContext::new(entities, globals, params, rng);
                         if let Some(e) = entity {
                             ctx = ctx.with_target(e);
                         }
@@ -546,8 +537,8 @@ impl Runtime {
             Effect::RandomChoice { choices } => {
                 let mut weights = Vec::new();
                 for (weight_expr, _) in choices {
-                    let mut ctx =
-                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                    let (entities, globals, rng) = model.eval_refs();
+                    let mut ctx = EvalContext::new(entities, globals, params, rng);
                     let weight = weight_expr
                         .eval(&mut ctx)
                         .ok()
@@ -565,8 +556,8 @@ impl Runtime {
                 }
             }
             Effect::Log { level, message } => {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let mut ctx = EvalContext::new(entities, globals, params, rng);
                 if let Ok(v) = message.eval(&mut ctx) {
                     result.logs.push((*level, format!("{}", v)));
                 }
@@ -577,8 +568,8 @@ impl Runtime {
                 message,
                 target: notify_target,
             } => {
-                let mut ctx =
-                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let (entities, globals, rng) = model.eval_refs();
+                let mut ctx = EvalContext::new(entities, globals, params, rng);
                 let title_str = title
                     .eval(&mut ctx)
                     .map(|v| format!("{}", v))
@@ -613,8 +604,9 @@ impl Runtime {
         target: &EntityRef,
         params: &'a ValueMap,
     ) -> EvalContext<'a> {
-        let target_entity = model.entities.resolve(target);
-        let mut ctx = EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+        let (entities, globals, rng) = model.eval_refs();
+        let target_entity = entities.resolve(target);
+        let mut ctx = EvalContext::new(entities, globals, params, rng);
         if let Some(entity) = target_entity {
             ctx = ctx.with_target(entity);
         }
@@ -881,7 +873,7 @@ impl Runtime {
                 filter,
                 effects,
             } => {
-                let entity_ids: Vec<_> = model.entities.by_kind(kind).map(|e| e.id).collect();
+                let entity_ids: Vec<_> = model.entities().by_kind(kind).map(|e| e.id).collect();
 
                 for entity_id in entity_ids {
                     let entity_target = EntityRef::Entity(entity_id);
@@ -1033,7 +1025,7 @@ mod tests {
         let mut runtime = Runtime::new();
 
         // Create an entity
-        let entity = model.entities.create("nation");
+        let entity = model.entities_mut().create("nation");
         entity.set("gold", 100.0f64);
         let entity_id = entity.id;
 
@@ -1057,7 +1049,7 @@ mod tests {
 
         assert_eq!(
             model
-                .entities
+                .entities()
                 .get(entity_id)
                 .and_then(|e| e.get_number("gold")),
             Some(150.0)
@@ -1072,7 +1064,7 @@ mod tests {
         let mut runtime = Runtime::new();
 
         // Create an entity
-        let entity = model.entities.create("test");
+        let entity = model.entities_mut().create("test");
         let entity_id = entity.id;
 
         // Create effect with division by zero expression
@@ -1173,9 +1165,9 @@ mod tests {
         let mut runtime = Runtime::new();
 
         // Create some entities
-        let e1 = model.entities.create("unit");
+        let e1 = model.entities_mut().create("unit");
         e1.set("health", 100.0f64);
-        let e2 = model.entities.create("unit");
+        let e2 = model.entities_mut().create("unit");
         e2.set("health", 50.0f64);
 
         // Create ForEach with filter that will fail (division by zero)

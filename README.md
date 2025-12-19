@@ -60,7 +60,7 @@ fn main() {
     let mut runtime = Runtime::new();
     
     // Create an entity
-    let entity = model.entities.create("sensor");
+    let entity = model.entities_mut().create("sensor");
     entity.set("temperature", 22.5);
     entity.set("location", "room_1");
     

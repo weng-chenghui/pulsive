@@ -136,7 +136,7 @@ impl ServerState {
         let mut model = Model::new();
 
         // Create server entity to track stats
-        let server_entity = model.entities.create("http_server");
+        let server_entity = model.entities_mut().create("http_server");
         server_entity.set("total_requests", Value::Int(0));
         server_entity.set("cache_hits", Value::Int(0));
         server_entity.set("cache_misses", Value::Int(0));
@@ -153,7 +153,7 @@ impl ServerState {
         let mut backend_entities = HashMap::new();
         for upstream in &config.upstreams {
             for server in &upstream.servers {
-                let backend = model.entities.create("backend");
+                let backend = model.entities_mut().create("backend");
                 backend.set("address", Value::String(server.address.clone()));
                 backend.set("upstream", Value::String(upstream.name.clone()));
                 backend.set("weight", Value::Int(server.weight as i64));
@@ -324,7 +324,7 @@ impl ServerState {
     /// Get current stats from the model
     async fn get_stats(&self) -> ServerStats {
         let model = self.model.read().await;
-        if let Some(entity) = model.entities.get(self.server_entity_id) {
+        if let Some(entity) = model.entities().get(self.server_entity_id) {
             ServerStats {
                 total_requests: entity.get_number("total_requests").unwrap_or(0.0) as u64,
                 cache_hits: entity.get_number("cache_hits").unwrap_or(0.0) as u64,

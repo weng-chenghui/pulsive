@@ -125,7 +125,7 @@ impl PulsiveEngine {
     /// Create a new entity of the given type
     #[func]
     fn create_entity(&mut self, kind: GString) -> i64 {
-        let entity = self.model.entities.create(kind.to_string());
+        let entity = self.model.entities_mut().create(kind.to_string());
         entity.id.raw() as i64
     }
 
@@ -133,7 +133,7 @@ impl PulsiveEngine {
     #[func]
     fn get_property(&self, entity_id: i64, property: GString) -> Variant {
         let id = pulsive_core::EntityId::new(entity_id as u64);
-        if let Some(entity) = self.model.entities.get(id) {
+        if let Some(entity) = self.model.entities().get(id) {
             if let Some(value) = entity.get(&property.to_string()) {
                 return value_to_variant(value);
             }
@@ -145,7 +145,7 @@ impl PulsiveEngine {
     #[func]
     fn set_property(&mut self, entity_id: i64, property: GString, value: Variant) {
         let id = pulsive_core::EntityId::new(entity_id as u64);
-        if let Some(entity) = self.model.entities.get_mut(id) {
+        if let Some(entity) = self.model.entities_mut().get_mut(id) {
             entity.set(property.to_string(), variant_to_value(&value));
         }
     }
@@ -154,7 +154,7 @@ impl PulsiveEngine {
     #[func]
     fn get_entity(&self, entity_id: i64) -> VarDictionary {
         let id = pulsive_core::EntityId::new(entity_id as u64);
-        if let Some(entity) = self.model.entities.get(id) {
+        if let Some(entity) = self.model.entities().get(id) {
             return value_map_to_dict(&entity.properties);
         }
         VarDictionary::new()
@@ -164,7 +164,7 @@ impl PulsiveEngine {
     #[func]
     fn delete_entity(&mut self, entity_id: i64) -> bool {
         let id = pulsive_core::EntityId::new(entity_id as u64);
-        self.model.entities.remove(id).is_some()
+        self.model.entities_mut().remove(id).is_some()
     }
 
     /// Get all entity IDs of a given type
@@ -173,7 +173,7 @@ impl PulsiveEngine {
         let def_id = DefId::new(kind.to_string());
         let ids: Vec<i64> = self
             .model
-            .entities
+            .entities()
             .by_kind(&def_id)
             .map(|e| e.id.raw() as i64)
             .collect();

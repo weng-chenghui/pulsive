@@ -155,7 +155,7 @@ impl<H: StateHistory> PredictionEngine<H> {
         }
 
         // Compare globals (simplified)
-        if a.globals.len() != b.globals.len() {
+        if a.globals().len() != b.globals().len() {
             return false;
         }
 

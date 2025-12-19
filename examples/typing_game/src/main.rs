@@ -91,7 +91,7 @@ fn run_game(
     model.set_global("rounds_completed", 0i64);
 
     // Create the round entity
-    let round = model.entities.create("round");
+    let round = model.entities_mut().create("round");
     round.set("sentence", "");
     round.set("typed_index", 0i64);
     round.set("round_score", 0i64);
@@ -219,7 +219,7 @@ fn run_game(
                 runtime.process_queue(&mut model);
 
                 // Check for timeout
-                let round_entity = model.entities.get(round_id).unwrap();
+                let round_entity = model.entities().get(round_id).unwrap();
                 let time_remaining =
                     round_entity.get_number("time_remaining_ms").unwrap_or(0.0) as i64;
                 if time_remaining <= 0 {
@@ -233,7 +233,7 @@ fn run_game(
             render_game_state(stdout, &model, round_id, sentence)?;
 
             // Check for round end
-            let round_entity = model.entities.get(round_id).unwrap();
+            let round_entity = model.entities().get(round_id).unwrap();
             let completed = round_entity
                 .get("completed")
                 .and_then(|v| v.as_bool())
@@ -284,7 +284,7 @@ fn run_game(
 }
 
 fn start_round(model: &mut Model, round_id: pulsive_core::EntityId, sentence: &str) {
-    let round = model.entities.get_mut(round_id).unwrap();
+    let round = model.entities_mut().get_mut(round_id).unwrap();
     round.set("sentence", sentence.to_string());
     round.set("typed_index", 0i64);
     round.set("round_score", 0i64);
@@ -300,7 +300,7 @@ fn handle_key_press(
     typed_char: char,
     sentence: &str,
 ) {
-    let round = model.entities.get(round_id).unwrap();
+    let round = model.entities().get(round_id).unwrap();
     let typed_index = round.get_number("typed_index").unwrap_or(0.0) as usize;
 
     // Check if the typed character matches
@@ -312,7 +312,7 @@ fn handle_key_press(
             runtime.process_queue(model);
 
             // Check if sentence is complete
-            let round = model.entities.get(round_id).unwrap();
+            let round = model.entities().get(round_id).unwrap();
             let new_index = round.get_number("typed_index").unwrap_or(0.0) as usize;
             if new_index >= sentence.len() {
                 let msg = Msg::event("round_complete", EntityRef::Entity(round_id), 0);
@@ -325,7 +325,7 @@ fn handle_key_press(
 }
 
 fn handle_backspace(model: &mut Model, round_id: pulsive_core::EntityId) {
-    let round = model.entities.get_mut(round_id).unwrap();
+    let round = model.entities_mut().get_mut(round_id).unwrap();
     let typed_index = round.get_number("typed_index").unwrap_or(0.0) as i64;
     if typed_index > 0 {
         round.set("typed_index", typed_index - 1);
@@ -383,7 +383,7 @@ fn render_game_state(
     round_id: pulsive_core::EntityId,
     sentence: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let round = model.entities.get(round_id).unwrap();
+    let round = model.entities().get(round_id).unwrap();
     let typed_index = round.get_number("typed_index").unwrap_or(0.0) as usize;
     let round_score = round.get_number("round_score").unwrap_or(0.0) as i64;
     let time_remaining = round.get_number("time_remaining_ms").unwrap_or(0.0) as i64;
@@ -513,7 +513,7 @@ fn render_round_result(
     sentence: &str,
     completed: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let round = model.entities.get(round_id).unwrap();
+    let round = model.entities().get(round_id).unwrap();
     let round_score = round.get_number("round_score").unwrap_or(0.0) as i64;
     let typed_index = round.get_number("typed_index").unwrap_or(0.0) as usize;
 

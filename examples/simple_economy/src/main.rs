@@ -20,14 +20,14 @@ fn main() {
     model.time = pulsive_core::Clock::with_start_date(1444, 11, 11);
 
     // Create two nations
-    let france = model.entities.create("nation");
+    let france = model.entities_mut().create("nation");
     france.set("name", "France");
     france.set("gold", 100.0f64);
     france.set("income", 10.0f64);
     france.set("expenses", 8.0f64);
     let france_id = france.id;
 
-    let england = model.entities.create("nation");
+    let england = model.entities_mut().create("nation");
     england.set("name", "England");
     england.set("gold", 80.0f64);
     england.set("income", 12.0f64);
@@ -76,8 +76,8 @@ fn main() {
         let _result = runtime.tick(&mut model);
 
         let date = model.time.current_date();
-        let france = model.entities.get(france_id).unwrap();
-        let england = model.entities.get(england_id).unwrap();
+        let france = model.entities().get(france_id).unwrap();
+        let england = model.entities().get(england_id).unwrap();
 
         println!(
             "Tick {} ({}): France: {:.1} gold, England: {:.1} gold",
@@ -97,7 +97,7 @@ fn main() {
     runtime.send(msg);
     runtime.process_queue(&mut model);
 
-    let france = model.entities.get(france_id).unwrap();
+    let france = model.entities().get(france_id).unwrap();
     println!(
         "After bonus: France now has {:.1} gold",
         france.get_number("gold").unwrap_or(0.0),
@@ -110,8 +110,8 @@ fn main() {
         runtime.tick(&mut model);
 
         let date = model.time.current_date();
-        let france = model.entities.get(france_id).unwrap();
-        let england = model.entities.get(england_id).unwrap();
+        let france = model.entities().get(france_id).unwrap();
+        let england = model.entities().get(england_id).unwrap();
 
         println!(
             "Tick {} ({}): France: {:.1} gold, England: {:.1} gold",
