@@ -602,7 +602,7 @@ pub fn resolve_conflicts(
 
     // Handle based on strategy
     match strategy {
-        ResolutionStrategy::Abort => Err(crate::Error::UnresolvedConflicts(report)),
+        ResolutionStrategy::Abort => Err(crate::Error::unresolved_conflicts(report)),
 
         ResolutionStrategy::FirstWriteWins => {
             resolve_with_strategy(write_sets, &report, |conflict| {
@@ -1519,7 +1519,8 @@ mod tests {
         assert!(result.is_err());
 
         match result {
-            Err(crate::Error::UnresolvedConflicts(report)) => {
+            Err(crate::Error::UnresolvedConflicts { count, report }) => {
+                assert_eq!(count, 1);
                 assert_eq!(report.len(), 1);
             }
             _ => panic!("Expected UnresolvedConflicts error"),
@@ -1879,5 +1880,92 @@ mod tests {
     fn test_resolution_strategy_default() {
         let strategy = ResolutionStrategy::default();
         assert!(matches!(strategy, ResolutionStrategy::Abort));
+    }
+
+    // ========================================================================
+    // Thread Safety and Error Handling Tests
+    // ========================================================================
+
+    /// Compile-time check that ConflictReport is Send + Sync
+    fn _assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn test_conflict_report_is_send_sync() {
+        // This test verifies ConflictReport can be safely shared across threads
+        _assert_send_sync::<ConflictReport>();
+        _assert_send_sync::<Conflict>();
+        _assert_send_sync::<ConflictKind>();
+        _assert_send_sync::<WriteTarget>();
+        _assert_send_sync::<ResolutionResult>();
+        _assert_send_sync::<ResolvedConflict>();
+    }
+
+    #[test]
+    fn test_error_display_roundtrip() {
+        // Test that the error message formats correctly
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let write_sets = vec![(CoreId(0), ws0), (CoreId(1), ws1)];
+
+        let result = resolve_conflicts(&write_sets, &ResolutionStrategy::Abort);
+        let err = result.unwrap_err();
+
+        // Verify the error message contains the count
+        let error_message = err.to_string();
+        assert!(
+            error_message.contains("1 conflict"),
+            "Error message should contain conflict count: {}",
+            error_message
+        );
+        assert!(
+            error_message.contains("unresolved conflicts"),
+            "Error message should mention unresolved conflicts: {}",
+            error_message
+        );
+    }
+
+    #[test]
+    fn test_error_conflict_report_accessor() {
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let write_sets = vec![(CoreId(0), ws0), (CoreId(1), ws1)];
+
+        let result = resolve_conflicts(&write_sets, &ResolutionStrategy::Abort);
+        let err = result.unwrap_err();
+
+        // Test the conflict_report() convenience accessor
+        let report = err.conflict_report().expect("Should have conflict report");
+        assert_eq!(report.len(), 1);
+        assert!(report.has_conflicts());
+    }
+
+    #[test]
+    fn test_error_conflict_report_accessor_returns_none_for_other_errors() {
+        // Other error variants should return None from conflict_report()
+        let err = crate::Error::NoGroups;
+        assert!(err.conflict_report().is_none());
+
+        let err = crate::Error::GroupNotFound(crate::GroupId(42));
+        assert!(err.conflict_report().is_none());
     }
 }
