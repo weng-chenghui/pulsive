@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Each variant represents a specific mutation that will be applied atomically.
 /// Values in these variants are already evaluated (no expressions).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PendingWrite {
     /// Set a property on an entity to a specific value
     SetProperty {

@@ -6,7 +6,7 @@
 //! # Conflict Types
 //!
 //! - **Write-Write**: Two different cores wrote to the same (entity, property) or global
-//! - **Read-Write** (optional): Core A read what Core B wrote
+//! - **Read-Write** (optional, future): Core A read what Core B wrote
 //!
 //! # Algorithm
 //!
@@ -16,6 +16,14 @@
 //!
 //! Note: Multiple writes from the *same* core to the same target are NOT conflicts -
 //! they are simply a sequence of operations that the core will order internally.
+//!
+//! # Spawn Conflicts
+//!
+//! By default, `detect_conflicts` reports ALL conflicts including spawn conflicts.
+//! Spawn conflicts (multiple cores spawning entities of the same kind) are often
+//! acceptable because spawns are independent operations - each core creates its own
+//! new entity. Use `detect_conflicts_filtered` with `default_conflict_filter` to
+//! exclude spawn conflicts if they are not relevant to your use case.
 
 use crate::CoreId;
 use pulsive_core::{DefId, EntityId, PendingWrite, WriteSet};
@@ -179,18 +187,38 @@ impl std::fmt::Display for ConflictKind {
 }
 
 /// A detected conflict with diagnostic information
-#[derive(Debug, Clone)]
+///
+/// Contains all information needed for conflict resolution:
+/// - `kind`: The type of conflict with representative cores (first two by ID order)
+/// - `cores`: All distinct cores involved (sorted by ID for deterministic output)
+/// - `writes`: All conflicting writes for debugging/resolution
+#[derive(Debug, Clone, PartialEq)]
 pub struct Conflict {
-    /// The kind of conflict
+    /// The kind of conflict (includes first two cores for quick identification)
     pub kind: ConflictKind,
-    /// The conflicting writes (for debugging/resolution)
+    /// All distinct cores involved in this conflict (sorted by CoreId for determinism)
+    pub cores: Vec<CoreId>,
+    /// All conflicting writes from all cores (for debugging/resolution)
     pub writes: Vec<(CoreId, PendingWrite)>,
 }
 
 impl Conflict {
     /// Create a new conflict
-    pub fn new(kind: ConflictKind, writes: Vec<(CoreId, PendingWrite)>) -> Self {
-        Self { kind, writes }
+    pub fn new(
+        kind: ConflictKind,
+        cores: Vec<CoreId>,
+        writes: Vec<(CoreId, PendingWrite)>,
+    ) -> Self {
+        Self {
+            kind,
+            cores,
+            writes,
+        }
+    }
+
+    /// Get the number of cores involved in this conflict
+    pub fn core_count(&self) -> usize {
+        self.cores.len()
     }
 }
 
@@ -201,7 +229,7 @@ impl std::fmt::Display for Conflict {
 }
 
 /// Result of conflict detection
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConflictReport {
     /// All detected conflicts
     pub conflicts: Vec<Conflict>,
@@ -287,16 +315,28 @@ pub fn detect_conflicts(write_sets: &[(CoreId, WriteSet)]) -> ConflictReport {
 }
 
 /// Create a Conflict from a target, its conflicting writes, and the set of distinct cores
+///
+/// # Precondition
+///
+/// `distinct_cores` must contain at least 2 elements. This is enforced by a debug_assert.
 fn create_conflict(
     target: &WriteTarget,
     writes: Vec<(CoreId, PendingWrite)>,
     distinct_cores: HashSet<CoreId>,
 ) -> Conflict {
-    // Get the first two distinct cores for the conflict kind
-    // (there may be more than 2 cores in conflict, but we report the first two)
-    let mut cores_iter = distinct_cores.into_iter();
-    let core_a = cores_iter.next().expect("at least 2 distinct cores");
-    let core_b = cores_iter.next().expect("at least 2 distinct cores");
+    debug_assert!(
+        distinct_cores.len() >= 2,
+        "create_conflict requires at least 2 distinct cores, got {}",
+        distinct_cores.len()
+    );
+
+    // Sort cores by ID for deterministic ordering in output
+    let mut sorted_cores: Vec<CoreId> = distinct_cores.into_iter().collect();
+    sorted_cores.sort_by_key(|c| c.0);
+
+    // Use first two sorted cores for the ConflictKind
+    let core_a = sorted_cores[0];
+    let core_b = sorted_cores[1];
 
     let kind = match target {
         WriteTarget::EntityProperty {
@@ -331,7 +371,7 @@ fn create_conflict(
         },
     };
 
-    Conflict::new(kind, writes)
+    Conflict::new(kind, sorted_cores, writes)
 }
 
 /// Detect conflicts with an option to exclude certain target types
@@ -439,13 +479,15 @@ mod tests {
                 core_b,
             } => {
                 assert_eq!(property, "gold");
-                // HashSet iteration order is not deterministic, so check both cores are present
-                let cores = [*core_a, *core_b];
-                assert!(cores.contains(&CoreId(0)));
-                assert!(cores.contains(&CoreId(1)));
+                // Cores are now sorted, so ordering is deterministic
+                assert_eq!(*core_a, CoreId(0));
+                assert_eq!(*core_b, CoreId(1));
             }
             _ => panic!("Expected GlobalPropertyWriteWrite"),
         }
+
+        // Also check the cores field
+        assert_eq!(report.conflicts[0].cores, vec![CoreId(0), CoreId(1)]);
     }
 
     #[test]
@@ -643,6 +685,7 @@ mod tests {
                 core_a: CoreId(0),
                 core_b: CoreId(1),
             },
+            vec![CoreId(0), CoreId(1)],
             vec![],
         );
 
@@ -768,7 +811,7 @@ mod tests {
         // All 3 writes should be in the conflict for diagnostics
         assert_eq!(report.conflicts[0].writes.len(), 3);
 
-        // The conflict kind should mention both distinct cores
+        // The conflict kind should mention both distinct cores (sorted order)
         match &report.conflicts[0].kind {
             ConflictKind::GlobalPropertyWriteWrite {
                 property,
@@ -776,13 +819,15 @@ mod tests {
                 core_b,
             } => {
                 assert_eq!(property, "gold");
-                // Both cores should be represented (order may vary due to HashSet)
-                let cores = [*core_a, *core_b];
-                assert!(cores.contains(&CoreId(0)));
-                assert!(cores.contains(&CoreId(1)));
+                // Cores are now sorted deterministically
+                assert_eq!(*core_a, CoreId(0));
+                assert_eq!(*core_b, CoreId(1));
             }
             _ => panic!("Expected GlobalPropertyWriteWrite"),
         }
+
+        // Check all cores are in the cores field
+        assert_eq!(report.conflicts[0].cores, vec![CoreId(0), CoreId(1)]);
     }
 
     #[test]
@@ -830,6 +875,7 @@ mod tests {
                 core_a: CoreId(0),
                 core_b: CoreId(1),
             },
+            vec![CoreId(0), CoreId(1)],
             vec![],
         );
 
@@ -838,5 +884,180 @@ mod tests {
         assert!(display.contains("spawned"));
         assert!(display.contains("Core(0)"));
         assert!(display.contains("Core(1)"));
+    }
+
+    // ========================================================================
+    // Tests for custom filters
+    // ========================================================================
+
+    #[test]
+    fn test_custom_filter_exclude_globals() {
+        // Custom filter that excludes global property conflicts
+        let exclude_globals =
+            |target: &WriteTarget| !matches!(target, WriteTarget::GlobalProperty { .. });
+
+        let entity_id = EntityId::new(42);
+
+        // Create writes: one global conflict, one entity property conflict
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+        ws1.push(PendingWrite::SetProperty {
+            entity_id,
+            key: "health".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+        ws2.push(PendingWrite::SetProperty {
+            entity_id,
+            key: "health".to_string(),
+            value: Value::Float(50.0),
+        });
+
+        // Without filter: 2 conflicts (global + entity property)
+        let report_unfiltered =
+            detect_conflicts(&[(CoreId(0), ws1.clone()), (CoreId(1), ws2.clone())]);
+        assert_eq!(report_unfiltered.len(), 2);
+
+        // With custom filter: only entity property conflict
+        let report_filtered =
+            detect_conflicts_filtered(&[(CoreId(0), ws1), (CoreId(1), ws2)], exclude_globals);
+        assert_eq!(report_filtered.len(), 1);
+        assert!(matches!(
+            &report_filtered.conflicts[0].kind,
+            ConflictKind::EntityPropertyWriteWrite { .. }
+        ));
+    }
+
+    #[test]
+    fn test_custom_filter_only_destroys() {
+        // Custom filter that only includes destroy conflicts
+        let only_destroys =
+            |target: &WriteTarget| matches!(target, WriteTarget::DestroyEntity { .. });
+
+        let entity_id = EntityId::new(42);
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+        ws1.push(PendingWrite::DestroyEntity { id: entity_id });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+        ws2.push(PendingWrite::DestroyEntity { id: entity_id });
+
+        // With only_destroys filter: just the destroy conflict
+        let report =
+            detect_conflicts_filtered(&[(CoreId(0), ws1), (CoreId(1), ws2)], only_destroys);
+        assert_eq!(report.len(), 1);
+        assert!(matches!(
+            &report.conflicts[0].kind,
+            ConflictKind::DestroyEntityWriteWrite { .. }
+        ));
+    }
+
+    // ========================================================================
+    // Tests for deterministic ordering
+    // ========================================================================
+
+    #[test]
+    fn test_deterministic_core_ordering() {
+        // Cores should always be sorted in the output regardless of input order
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(300.0),
+        });
+
+        // Test with different input orders - output should be the same
+        let report1 = detect_conflicts(&[
+            (CoreId(2), ws2.clone()),
+            (CoreId(0), ws0.clone()),
+            (CoreId(1), ws1.clone()),
+        ]);
+        let report2 = detect_conflicts(&[(CoreId(0), ws0), (CoreId(1), ws1), (CoreId(2), ws2)]);
+
+        // Both should have cores sorted: [0, 1, 2]
+        assert_eq!(
+            report1.conflicts[0].cores,
+            vec![CoreId(0), CoreId(1), CoreId(2)]
+        );
+        assert_eq!(
+            report2.conflicts[0].cores,
+            vec![CoreId(0), CoreId(1), CoreId(2)]
+        );
+
+        // ConflictKind should have core_a=0, core_b=1 (first two sorted)
+        match &report1.conflicts[0].kind {
+            ConflictKind::GlobalPropertyWriteWrite { core_a, core_b, .. } => {
+                assert_eq!(*core_a, CoreId(0));
+                assert_eq!(*core_b, CoreId(1));
+            }
+            _ => panic!("Expected GlobalPropertyWriteWrite"),
+        }
+    }
+
+    #[test]
+    fn test_conflict_cores_field() {
+        // Verify the cores field contains all distinct cores
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+        // Core 0 writes twice
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(150.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(300.0),
+        });
+
+        let report = detect_conflicts(&[(CoreId(0), ws0), (CoreId(1), ws1), (CoreId(2), ws2)]);
+
+        // Should have exactly 3 distinct cores (even though Core 0 wrote twice)
+        assert_eq!(report.conflicts[0].cores.len(), 3);
+        assert_eq!(
+            report.conflicts[0].cores,
+            vec![CoreId(0), CoreId(1), CoreId(2)]
+        );
+        assert_eq!(report.conflicts[0].core_count(), 3);
+
+        // Should have 4 total writes
+        assert_eq!(report.conflicts[0].writes.len(), 4);
     }
 }
