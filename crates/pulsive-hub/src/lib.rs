@@ -29,6 +29,7 @@
 //! 2. **pulsive-core is standalone** - it does NOT know about pulsive-hub
 //! 3. **Core is just a wrapper** - bundles Runtime+Model, delegates all logic to pulsive-core
 
+pub mod commit;
 mod core;
 mod error;
 mod group;
@@ -36,6 +37,7 @@ mod hub;
 mod snapshot;
 mod tick_sync;
 
+pub use commit::{apply, apply_batch};
 pub use core::{Core, CoreId};
 pub use error::{Error, Result};
 pub use group::{CoreGroup, GroupId};

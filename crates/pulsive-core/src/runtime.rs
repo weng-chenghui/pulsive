@@ -1,8 +1,10 @@
 //! Elm-style runtime for the reactive engine
 
 use crate::{
-    effect::EffectResult, expr::EvalContext, Cmd, DefId, Effect, EntityRef, Expr, Model, Msg,
-    MsgKind, Value, ValueMap,
+    effect::EffectResult,
+    expr::EvalContext,
+    write_set::{PendingWrite, WriteSet},
+    Cmd, DefId, Effect, EntityRef, Expr, Model, Msg, MsgKind, Value, ValueMap,
 };
 use std::collections::VecDeque;
 
@@ -597,6 +599,339 @@ impl Runtime {
                 // Handle remaining effect types
             }
         }
+    }
+
+    // ========================================================================
+    // Deferred Write Support (for pulsive-hub integration)
+    // ========================================================================
+
+    /// Collect writes from an effect into a WriteSet without mutating the model
+    ///
+    /// This is the deferred-write version of `execute_effect`. It evaluates expressions
+    /// and collects the resulting writes, which can be applied atomically later by
+    /// pulsive-hub.
+    ///
+    /// Note: The model is still passed mutably for RNG access during expression evaluation,
+    /// but entity/global state is not modified - only the WriteSet is populated.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - The model to evaluate expressions against (not mutated)
+    /// * `effect` - The effect to collect writes from
+    /// * `target` - The target entity for the effect
+    /// * `params` - Parameters from the message
+    /// * `result` - EffectResult to collect side effects (logs, events, notifications)
+    ///
+    /// # Returns
+    ///
+    /// A WriteSet containing all pending writes from this effect
+    #[allow(clippy::only_used_in_recursion)]
+    pub fn collect_effect(
+        &mut self,
+        model: &mut Model,
+        effect: &Effect,
+        target: &EntityRef,
+        params: &ValueMap,
+        result: &mut EffectResult,
+    ) -> WriteSet {
+        let mut writes = WriteSet::new();
+
+        match effect {
+            Effect::SetProperty { property, value } => {
+                // Evaluate with target entity context
+                let target_entity = model.entities.resolve(target);
+                let mut ctx =
+                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                if let Some(entity) = target_entity {
+                    ctx = ctx.with_target(entity);
+                }
+                let eval_result = value.eval(&mut ctx);
+
+                if let (Ok(v), Some(entity_id)) = (eval_result, target.as_entity_id()) {
+                    writes.push(PendingWrite::SetProperty {
+                        entity_id,
+                        key: property.clone(),
+                        value: v,
+                    });
+                }
+            }
+            Effect::ModifyProperty {
+                property,
+                op,
+                value,
+            } => {
+                // Evaluate with target entity context
+                let target_entity = model.entities.resolve(target);
+                let mut ctx =
+                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                if let Some(entity) = target_entity {
+                    ctx = ctx.with_target(entity);
+                }
+                let eval_result = value.eval(&mut ctx);
+
+                if let (Ok(v), Some(entity_id)) = (eval_result, target.as_entity_id()) {
+                    if let Some(operand) = v.as_float() {
+                        writes.push(PendingWrite::ModifyProperty {
+                            entity_id,
+                            key: property.clone(),
+                            op: op.clone(),
+                            value: operand,
+                        });
+                    }
+                }
+            }
+            Effect::SetGlobal { property, value } => {
+                let mut ctx =
+                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                if let Ok(v) = value.eval(&mut ctx) {
+                    writes.push(PendingWrite::SetGlobal {
+                        key: property.clone(),
+                        value: v,
+                    });
+                }
+            }
+            Effect::ModifyGlobal {
+                property,
+                op,
+                value,
+            } => {
+                let mut ctx =
+                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                if let Ok(v) = value.eval(&mut ctx) {
+                    if let Some(operand) = v.as_float() {
+                        writes.push(PendingWrite::ModifyGlobal {
+                            key: property.clone(),
+                            op: op.clone(),
+                            value: operand,
+                        });
+                    }
+                }
+            }
+            Effect::AddFlag(flag) => {
+                if let Some(entity_id) = target.as_entity_id() {
+                    writes.push(PendingWrite::AddFlag {
+                        entity_id,
+                        flag: flag.clone(),
+                    });
+                }
+            }
+            Effect::RemoveFlag(flag) => {
+                if let Some(entity_id) = target.as_entity_id() {
+                    writes.push(PendingWrite::RemoveFlag {
+                        entity_id,
+                        flag: flag.clone(),
+                    });
+                }
+            }
+            Effect::SpawnEntity { kind, properties } => {
+                // Evaluate all property expressions
+                let mut evaluated_props = ValueMap::new();
+                for (key, value_expr) in properties {
+                    let mut ctx =
+                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                    if let Ok(v) = value_expr.eval(&mut ctx) {
+                        evaluated_props.insert(key.clone(), v);
+                    }
+                }
+
+                writes.push(PendingWrite::SpawnEntity {
+                    kind: kind.clone(),
+                    properties: evaluated_props,
+                });
+            }
+            Effect::DestroyTarget => {
+                if let Some(id) = target.as_entity_id() {
+                    writes.push(PendingWrite::DestroyEntity { id });
+                }
+            }
+            Effect::DestroyEntity(entity_ref) => {
+                if let Some(id) = entity_ref.as_entity_id() {
+                    writes.push(PendingWrite::DestroyEntity { id });
+                }
+            }
+            Effect::EmitEvent {
+                event,
+                target: event_target,
+                params: event_params,
+            } => {
+                // Event emission goes to EffectResult, not WriteSet
+                let mut evaluated_params = ValueMap::new();
+                for (key, expr) in event_params {
+                    let mut ctx =
+                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                    if let Ok(v) = expr.eval(&mut ctx) {
+                        evaluated_params.insert(key.clone(), v);
+                    }
+                }
+                result
+                    .emitted_events
+                    .push((event.clone(), event_target.clone(), evaluated_params));
+            }
+            Effect::ScheduleEvent {
+                event,
+                target: event_target,
+                delay_ticks,
+                params: event_params,
+            } => {
+                // Scheduled events go to EffectResult, not WriteSet
+                let mut ctx =
+                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                if let Ok(delay_val) = delay_ticks.eval(&mut ctx) {
+                    if let Some(delay) = delay_val.as_int() {
+                        let mut evaluated_params = ValueMap::new();
+                        for (key, expr) in event_params {
+                            let mut ctx = EvalContext::new(
+                                &model.entities,
+                                &model.globals,
+                                params,
+                                &mut model.rng,
+                            );
+                            if let Ok(v) = expr.eval(&mut ctx) {
+                                evaluated_params.insert(key.clone(), v);
+                            }
+                        }
+                        result.scheduled_events.push((
+                            event.clone(),
+                            event_target.clone(),
+                            delay as u64,
+                            evaluated_params,
+                        ));
+                    }
+                }
+            }
+            Effect::If {
+                condition,
+                then_effects,
+                else_effects,
+            } => {
+                let target_entity = model.entities.resolve(target);
+                let mut ctx =
+                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                if let Some(entity) = target_entity {
+                    ctx = ctx.with_target(entity);
+                }
+                let cond_result = condition.eval(&mut ctx);
+
+                let effects = if cond_result.map(|v| v.is_truthy()).unwrap_or(false) {
+                    then_effects
+                } else {
+                    else_effects
+                };
+
+                for eff in effects {
+                    let child_writes = self.collect_effect(model, eff, target, params, result);
+                    writes.extend(child_writes);
+                }
+            }
+            Effect::Sequence(effects) => {
+                for eff in effects {
+                    let child_writes = self.collect_effect(model, eff, target, params, result);
+                    writes.extend(child_writes);
+                }
+            }
+            Effect::ForEachEntity {
+                kind,
+                filter,
+                effects,
+            } => {
+                let entity_ids: Vec<_> = model.entities.by_kind(kind).map(|e| e.id).collect();
+
+                for entity_id in entity_ids {
+                    // Check filter
+                    if let Some(filter_expr) = filter {
+                        let entity = model.entities.get(entity_id);
+                        let mut ctx = EvalContext::new(
+                            &model.entities,
+                            &model.globals,
+                            params,
+                            &mut model.rng,
+                        );
+                        if let Some(e) = entity {
+                            ctx = ctx.with_target(e);
+                        }
+
+                        match filter_expr.eval(&mut ctx) {
+                            Ok(v) if !v.is_truthy() => continue,
+                            Err(_) => continue,
+                            _ => {}
+                        }
+                    }
+
+                    let entity_target = EntityRef::Entity(entity_id);
+                    for eff in effects {
+                        let child_writes =
+                            self.collect_effect(model, eff, &entity_target, params, result);
+                        writes.extend(child_writes);
+                    }
+                }
+            }
+            Effect::RandomChoice { choices } => {
+                let mut weights = Vec::new();
+                for (weight_expr, _) in choices {
+                    let target_entity = model.entities.resolve(target);
+                    let mut ctx =
+                        EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                    if let Some(entity) = target_entity {
+                        ctx = ctx.with_target(entity);
+                    }
+                    let weight = weight_expr
+                        .eval(&mut ctx)
+                        .ok()
+                        .and_then(|v| v.as_float())
+                        .unwrap_or(0.0);
+                    weights.push(weight);
+                }
+
+                if let Some(index) = model.rng.weighted_index(&weights) {
+                    if let Some((_, effects)) = choices.get(index) {
+                        for eff in effects {
+                            let child_writes =
+                                self.collect_effect(model, eff, target, params, result);
+                            writes.extend(child_writes);
+                        }
+                    }
+                }
+            }
+            Effect::Log { level, message } => {
+                // Logs go to EffectResult, not WriteSet
+                let mut ctx =
+                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                if let Ok(v) = message.eval(&mut ctx) {
+                    result.logs.push((*level, format!("{}", v)));
+                }
+            }
+            Effect::Notify {
+                kind,
+                title,
+                message,
+                target: notify_target,
+            } => {
+                // Notifications go to EffectResult, not WriteSet
+                let mut ctx =
+                    EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+                let title_str = title
+                    .eval(&mut ctx)
+                    .map(|v| format!("{}", v))
+                    .unwrap_or_default();
+                let msg_str = message
+                    .eval(&mut ctx)
+                    .map(|v| format!("{}", v))
+                    .unwrap_or_default();
+
+                result.notifications.push(crate::effect::Notification {
+                    kind: kind.clone(),
+                    title: title_str,
+                    message: msg_str,
+                    target: notify_target.clone(),
+                });
+            }
+            _ => {
+                // Handle remaining effect types (SetEntityProperty, etc.)
+                // These can be added as needed
+            }
+        }
+
+        writes
     }
 }
 
