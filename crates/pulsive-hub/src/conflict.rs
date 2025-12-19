@@ -5,18 +5,21 @@
 //!
 //! # Conflict Types
 //!
-//! - **Write-Write**: Two cores wrote to the same (entity, property) or global
+//! - **Write-Write**: Two different cores wrote to the same (entity, property) or global
 //! - **Read-Write** (optional): Core A read what Core B wrote
 //!
 //! # Algorithm
 //!
 //! Conflict detection is O(n) where n = total writes across all WriteSets:
 //! 1. Build a map from write targets to (core_id, write) pairs
-//! 2. Any target with multiple entries is a conflict
+//! 2. Any target with writes from multiple distinct cores is a conflict
+//!
+//! Note: Multiple writes from the *same* core to the same target are NOT conflicts -
+//! they are simply a sequence of operations that the core will order internally.
 
 use crate::CoreId;
 use pulsive_core::{DefId, EntityId, PendingWrite, WriteSet};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The target of a write operation - used as the key for conflict detection
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -93,6 +96,16 @@ pub enum ConflictKind {
         core_a: CoreId,
         core_b: CoreId,
     },
+    /// Two cores spawned entities of the same kind
+    ///
+    /// This is often acceptable (multiple spawns are independent) but is
+    /// detected for cases where spawn order matters or needs coordination.
+    /// Use `default_conflict_filter` to exclude spawn conflicts if desired.
+    SpawnEntityWriteWrite {
+        kind: DefId,
+        core_a: CoreId,
+        core_b: CoreId,
+    },
     /// Two cores tried to destroy the same entity
     DestroyEntityWriteWrite {
         entity_id: EntityId,
@@ -112,7 +125,7 @@ impl std::fmt::Display for ConflictKind {
             } => {
                 write!(
                     f,
-                    "Write-write conflict on entity {:?} property '{}' between {} and {}",
+                    "Write-write conflict on entity {} property '{}' between {} and {}",
                     entity_id, property, core_a, core_b
                 )
             }
@@ -124,7 +137,7 @@ impl std::fmt::Display for ConflictKind {
             } => {
                 write!(
                     f,
-                    "Write-write conflict on entity {:?} flag '{}' between {} and {}",
+                    "Write-write conflict on entity {} flag '{}' between {} and {}",
                     entity_id, flag, core_a, core_b
                 )
             }
@@ -139,6 +152,17 @@ impl std::fmt::Display for ConflictKind {
                     property, core_a, core_b
                 )
             }
+            ConflictKind::SpawnEntityWriteWrite {
+                kind,
+                core_a,
+                core_b,
+            } => {
+                write!(
+                    f,
+                    "Write-write conflict: entity kind '{}' spawned by both {} and {}",
+                    kind, core_a, core_b
+                )
+            }
             ConflictKind::DestroyEntityWriteWrite {
                 entity_id,
                 core_a,
@@ -146,7 +170,7 @@ impl std::fmt::Display for ConflictKind {
             } => {
                 write!(
                     f,
-                    "Write-write conflict: entity {:?} destroyed by both {} and {}",
+                    "Write-write conflict: entity {} destroyed by both {} and {}",
                     entity_id, core_a, core_b
                 )
             }
@@ -215,7 +239,10 @@ impl ConflictReport {
 /// # Algorithm
 ///
 /// 1. Build a HashMap from `WriteTarget` to `Vec<(CoreId, PendingWrite)>`
-/// 2. Any target with more than one entry represents a conflict
+/// 2. Any target with writes from multiple distinct cores is a conflict
+///
+/// Note: Multiple writes from the *same* core to the same target are NOT conflicts.
+/// They are simply a sequence of operations that the core orders internally.
 ///
 /// # Complexity
 ///
@@ -242,13 +269,16 @@ pub fn detect_conflicts(write_sets: &[(CoreId, WriteSet)]) -> ConflictReport {
         }
     }
 
-    // Phase 2: Find conflicts (targets with multiple writers)
+    // Phase 2: Find conflicts (targets with writes from multiple distinct cores)
     let mut report = ConflictReport::new();
 
     for (target, writes) in write_map {
-        if writes.len() > 1 {
-            // We have a conflict - multiple cores wrote to the same target
-            let conflict = create_conflict(&target, writes);
+        // Collect distinct core IDs
+        let distinct_cores: HashSet<CoreId> = writes.iter().map(|(c, _)| *c).collect();
+
+        // Only a conflict if at least two distinct cores wrote to the same target
+        if distinct_cores.len() > 1 {
+            let conflict = create_conflict(&target, writes, distinct_cores);
             report.conflicts.push(conflict);
         }
     }
@@ -256,12 +286,17 @@ pub fn detect_conflicts(write_sets: &[(CoreId, WriteSet)]) -> ConflictReport {
     report
 }
 
-/// Create a Conflict from a target and its conflicting writes
-fn create_conflict(target: &WriteTarget, writes: Vec<(CoreId, PendingWrite)>) -> Conflict {
-    // Get the first two cores for the conflict kind
-    // (there may be more than 2 cores in conflict)
-    let core_a = writes[0].0;
-    let core_b = writes[1].0;
+/// Create a Conflict from a target, its conflicting writes, and the set of distinct cores
+fn create_conflict(
+    target: &WriteTarget,
+    writes: Vec<(CoreId, PendingWrite)>,
+    distinct_cores: HashSet<CoreId>,
+) -> Conflict {
+    // Get the first two distinct cores for the conflict kind
+    // (there may be more than 2 cores in conflict, but we report the first two)
+    let mut cores_iter = distinct_cores.into_iter();
+    let core_a = cores_iter.next().expect("at least 2 distinct cores");
+    let core_b = cores_iter.next().expect("at least 2 distinct cores");
 
     let kind = match target {
         WriteTarget::EntityProperty {
@@ -284,16 +319,11 @@ fn create_conflict(target: &WriteTarget, writes: Vec<(CoreId, PendingWrite)>) ->
             core_a,
             core_b,
         },
-        WriteTarget::SpawnEntity { kind: _ } => {
-            // Spawn conflicts are unusual - multiple cores spawning same kind is often OK
-            // For now, we don't generate conflicts for spawns
-            // This branch won't be reached due to how we filter, but we handle it gracefully
-            ConflictKind::GlobalPropertyWriteWrite {
-                property: "spawn".to_string(),
-                core_a,
-                core_b,
-            }
-        }
+        WriteTarget::SpawnEntity { kind } => ConflictKind::SpawnEntityWriteWrite {
+            kind: kind.clone(),
+            core_a,
+            core_b,
+        },
         WriteTarget::DestroyEntity { entity_id } => ConflictKind::DestroyEntityWriteWrite {
             entity_id: *entity_id,
             core_a,
@@ -307,7 +337,8 @@ fn create_conflict(target: &WriteTarget, writes: Vec<(CoreId, PendingWrite)>) ->
 /// Detect conflicts with an option to exclude certain target types
 ///
 /// This is useful for cases where spawn conflicts are acceptable
-/// (e.g., multiple cores spawning entities of the same kind is often fine)
+/// (e.g., multiple cores spawning entities of the same kind is often fine).
+/// Use `default_conflict_filter` to exclude spawn conflicts.
 pub fn detect_conflicts_filtered<F>(write_sets: &[(CoreId, WriteSet)], filter: F) -> ConflictReport
 where
     F: Fn(&WriteTarget) -> bool,
@@ -329,8 +360,12 @@ where
     let mut report = ConflictReport::new();
 
     for (target, writes) in write_map {
-        if writes.len() > 1 {
-            let conflict = create_conflict(&target, writes);
+        // Collect distinct core IDs
+        let distinct_cores: HashSet<CoreId> = writes.iter().map(|(c, _)| *c).collect();
+
+        // Only a conflict if at least two distinct cores wrote to the same target
+        if distinct_cores.len() > 1 {
+            let conflict = create_conflict(&target, writes, distinct_cores);
             report.conflicts.push(conflict);
         }
     }
@@ -404,8 +439,10 @@ mod tests {
                 core_b,
             } => {
                 assert_eq!(property, "gold");
-                assert_eq!(*core_a, CoreId(0));
-                assert_eq!(*core_b, CoreId(1));
+                // HashSet iteration order is not deterministic, so check both cores are present
+                let cores = [*core_a, *core_b];
+                assert!(cores.contains(&CoreId(0)));
+                assert!(cores.contains(&CoreId(1)));
             }
             _ => panic!("Expected GlobalPropertyWriteWrite"),
         }
@@ -562,7 +599,7 @@ mod tests {
     }
 
     #[test]
-    fn test_spawn_not_filtered_by_default_detect() {
+    fn test_spawn_conflict_detected() {
         let kind = DefId::new("unit");
 
         let mut ws1 = WriteSet::new();
@@ -580,6 +617,15 @@ mod tests {
         // Regular detect_conflicts includes spawns
         let report = detect_conflicts(&[(CoreId(0), ws1.clone()), (CoreId(1), ws2.clone())]);
         assert!(report.has_conflicts());
+        assert_eq!(report.len(), 1);
+
+        // Verify it's a SpawnEntityWriteWrite conflict
+        match &report.conflicts[0].kind {
+            ConflictKind::SpawnEntityWriteWrite { kind: k, .. } => {
+                assert_eq!(k.as_str(), "unit");
+            }
+            _ => panic!("Expected SpawnEntityWriteWrite"),
+        }
 
         // Filtered version excludes spawns
         let report_filtered = detect_conflicts_filtered(
@@ -644,5 +690,153 @@ mod tests {
             target,
             WriteTarget::DestroyEntity { entity_id: eid } if eid == entity_id
         ));
+    }
+
+    // ========================================================================
+    // Edge case tests for same-core multiple writes
+    // ========================================================================
+
+    #[test]
+    fn test_same_core_multiple_writes_no_conflict() {
+        // Multiple writes from the SAME core to the same target should NOT be a conflict
+        let mut ws = WriteSet::new();
+        ws.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+        ws.push(PendingWrite::ModifyGlobal {
+            key: "gold".to_string(),
+            op: ModifyOp::Add,
+            value: 50.0,
+        });
+        ws.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        // All from same core - no conflict
+        let report = detect_conflicts(&[(CoreId(0), ws)]);
+        assert!(!report.has_conflicts());
+    }
+
+    #[test]
+    fn test_same_core_multiple_writes_entity_property_no_conflict() {
+        // Multiple writes from the SAME core to the same entity property
+        let entity_id = EntityId::new(42);
+
+        let mut ws = WriteSet::new();
+        ws.push(PendingWrite::SetProperty {
+            entity_id,
+            key: "health".to_string(),
+            value: Value::Float(100.0),
+        });
+        ws.push(PendingWrite::ModifyProperty {
+            entity_id,
+            key: "health".to_string(),
+            op: ModifyOp::Add,
+            value: -10.0,
+        });
+
+        // All from same core - no conflict
+        let report = detect_conflicts(&[(CoreId(0), ws)]);
+        assert!(!report.has_conflicts());
+    }
+
+    #[test]
+    fn test_mixed_same_core_and_different_cores() {
+        // Core 0 writes twice, Core 1 writes once - should be a conflict
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(150.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let report = detect_conflicts(&[(CoreId(0), ws0), (CoreId(1), ws1)]);
+        assert!(report.has_conflicts());
+        assert_eq!(report.len(), 1);
+
+        // All 3 writes should be in the conflict for diagnostics
+        assert_eq!(report.conflicts[0].writes.len(), 3);
+
+        // The conflict kind should mention both distinct cores
+        match &report.conflicts[0].kind {
+            ConflictKind::GlobalPropertyWriteWrite {
+                property,
+                core_a,
+                core_b,
+            } => {
+                assert_eq!(property, "gold");
+                // Both cores should be represented (order may vary due to HashSet)
+                let cores = [*core_a, *core_b];
+                assert!(cores.contains(&CoreId(0)));
+                assert!(cores.contains(&CoreId(1)));
+            }
+            _ => panic!("Expected GlobalPropertyWriteWrite"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_cores_with_duplicates() {
+        // Core 0 writes twice, Core 1 writes twice, Core 2 writes once
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "score".to_string(),
+            value: Value::Float(10.0),
+        });
+        ws0.push(PendingWrite::SetGlobal {
+            key: "score".to_string(),
+            value: Value::Float(20.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "score".to_string(),
+            value: Value::Float(30.0),
+        });
+        ws1.push(PendingWrite::SetGlobal {
+            key: "score".to_string(),
+            value: Value::Float(40.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "score".to_string(),
+            value: Value::Float(50.0),
+        });
+
+        let report = detect_conflicts(&[(CoreId(0), ws0), (CoreId(1), ws1), (CoreId(2), ws2)]);
+        assert!(report.has_conflicts());
+        assert_eq!(report.len(), 1);
+
+        // All 5 writes should be in the conflict for diagnostics
+        assert_eq!(report.conflicts[0].writes.len(), 5);
+    }
+
+    #[test]
+    fn test_spawn_conflict_display() {
+        let conflict = Conflict::new(
+            ConflictKind::SpawnEntityWriteWrite {
+                kind: DefId::new("unit"),
+                core_a: CoreId(0),
+                core_b: CoreId(1),
+            },
+            vec![],
+        );
+
+        let display = format!("{}", conflict);
+        assert!(display.contains("unit"));
+        assert!(display.contains("spawned"));
+        assert!(display.contains("Core(0)"));
+        assert!(display.contains("Core(1)"));
     }
 }
