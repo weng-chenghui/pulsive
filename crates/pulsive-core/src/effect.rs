@@ -7,7 +7,7 @@ use crate::{DefId, EntityRef, Expr, ValueMap};
 use serde::{Deserialize, Serialize};
 
 /// An operation to modify a numeric value
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ModifyOp {
     /// Set to the value
     Set,
