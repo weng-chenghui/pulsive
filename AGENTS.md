@@ -9,7 +9,8 @@ This document outlines the guidelines for AI agents working on this codebase.
 **All commits should be signed locally.** Do not use sandbox mode when making commits.
 
 - Always attempt to sign commits with GPG/SSH signing
-- If commit signing fails, **stop making commits immediately**
+- If commit signing fails in sandbox mode, **retry with `required_permissions: ['all']`** to run outside the sandbox
+- If commit signing still fails after disabling sandbox, **stop making commits immediately**
 - Instead, provide the user with the exact commands to:
   1. Stage the changes: `git add <files>`
   2. Commit with the proper message: `git commit -S -m "<commit message>"`
