@@ -1,8 +1,10 @@
 //! Elm-style runtime for the reactive engine
 
 use crate::{
-    effect::EffectResult, expr::EvalContext, Cmd, DefId, Effect, EntityRef, Expr, Model, Msg,
-    MsgKind, Value, ValueMap,
+    effect::EffectResult,
+    expr::EvalContext,
+    write_set::{PendingWrite, WriteSet},
+    Cmd, DefId, Effect, EntityRef, Expr, Model, Msg, MsgKind, Value, ValueMap,
 };
 use std::collections::VecDeque;
 
@@ -598,6 +600,387 @@ impl Runtime {
             }
         }
     }
+
+    // ========================================================================
+    // Deferred Write Support (for pulsive-hub integration)
+    // ========================================================================
+
+    /// Helper to create an EvalContext with optional target entity resolution
+    ///
+    /// This reduces code duplication when creating evaluation contexts.
+    fn make_eval_context<'a>(
+        model: &'a mut Model,
+        target: &EntityRef,
+        params: &'a ValueMap,
+    ) -> EvalContext<'a> {
+        let target_entity = model.entities.resolve(target);
+        let mut ctx = EvalContext::new(&model.entities, &model.globals, params, &mut model.rng);
+        if let Some(entity) = target_entity {
+            ctx = ctx.with_target(entity);
+        }
+        ctx
+    }
+
+    /// Log an expression evaluation error to EffectResult
+    fn log_eval_error(result: &mut EffectResult, context: &str, error: &crate::Error) {
+        use crate::effect::LogLevel;
+        result.logs.push((
+            LogLevel::Warn,
+            format!("Effect eval error in {}: {}", context, error),
+        ));
+    }
+
+    /// Collect writes from an effect into a WriteSet without mutating the model
+    ///
+    /// This is the deferred-write version of `execute_effect`. It evaluates expressions
+    /// and collects the resulting writes, which can be applied atomically later by
+    /// pulsive-hub.
+    ///
+    /// Note: The model is still passed mutably for RNG access during expression evaluation,
+    /// but entity/global state is not modified - only the WriteSet is populated.
+    ///
+    /// # Arguments
+    ///
+    /// * `model` - The model to evaluate expressions against (not mutated)
+    /// * `effect` - The effect to collect writes from
+    /// * `target` - The target entity for the effect
+    /// * `params` - Parameters from the message
+    /// * `result` - EffectResult to collect side effects (logs, events, notifications)
+    ///
+    /// # Returns
+    ///
+    /// A WriteSet containing all pending writes from this effect
+    ///
+    /// # Error Handling (On Eval Error)
+    ///
+    /// When expression evaluation fails, errors are logged as warnings to
+    /// `EffectResult.logs` with context about which effect/field failed. The
+    /// specific behavior for each effect type:
+    ///
+    /// - **Leaf effects** (SetProperty, SetGlobal, etc.): The write is skipped,
+    ///   a warning is logged, and processing continues.
+    /// - **If**: On condition eval error, defaults to the `else` branch.
+    /// - **ForEachEntity**: On filter eval error, the entity is skipped.
+    /// - **RandomChoice**: On weight eval error, the choice weight defaults to 0.0.
+    /// - **Log/Notify**: On message eval error, an empty string is used.
+    /// - **ScheduleEvent**: On delay eval error, the event is not scheduled.
+    ///
+    /// This design ensures partial progress: a single failed expression doesn't
+    /// abort the entire effect tree, while errors remain observable via logs.
+    #[allow(clippy::only_used_in_recursion)]
+    pub fn collect_effect(
+        &mut self,
+        model: &mut Model,
+        effect: &Effect,
+        target: &EntityRef,
+        params: &ValueMap,
+        result: &mut EffectResult,
+    ) -> WriteSet {
+        let mut writes = WriteSet::new();
+
+        match effect {
+            Effect::SetProperty { property, value } => {
+                let mut ctx = Self::make_eval_context(model, target, params);
+                match value.eval(&mut ctx) {
+                    Ok(v) => {
+                        if let Some(entity_id) = target.as_entity_id() {
+                            writes.push(PendingWrite::SetProperty {
+                                entity_id,
+                                key: property.clone(),
+                                value: v,
+                            });
+                        }
+                    }
+                    Err(e) => Self::log_eval_error(result, "SetProperty", &e),
+                }
+            }
+            Effect::ModifyProperty {
+                property,
+                op,
+                value,
+            } => {
+                let mut ctx = Self::make_eval_context(model, target, params);
+                match value.eval(&mut ctx) {
+                    Ok(v) => {
+                        if let (Some(operand), Some(entity_id)) =
+                            (v.as_float(), target.as_entity_id())
+                        {
+                            writes.push(PendingWrite::ModifyProperty {
+                                entity_id,
+                                key: property.clone(),
+                                op: op.clone(),
+                                value: operand,
+                            });
+                        }
+                    }
+                    Err(e) => Self::log_eval_error(result, "ModifyProperty", &e),
+                }
+            }
+            Effect::SetGlobal { property, value } => {
+                let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                match value.eval(&mut ctx) {
+                    Ok(v) => {
+                        writes.push(PendingWrite::SetGlobal {
+                            key: property.clone(),
+                            value: v,
+                        });
+                    }
+                    Err(e) => Self::log_eval_error(result, "SetGlobal", &e),
+                }
+            }
+            Effect::ModifyGlobal {
+                property,
+                op,
+                value,
+            } => {
+                let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                match value.eval(&mut ctx) {
+                    Ok(v) => {
+                        if let Some(operand) = v.as_float() {
+                            writes.push(PendingWrite::ModifyGlobal {
+                                key: property.clone(),
+                                op: op.clone(),
+                                value: operand,
+                            });
+                        }
+                    }
+                    Err(e) => Self::log_eval_error(result, "ModifyGlobal", &e),
+                }
+            }
+            Effect::AddFlag(flag) => {
+                if let Some(entity_id) = target.as_entity_id() {
+                    writes.push(PendingWrite::AddFlag {
+                        entity_id,
+                        flag: flag.clone(),
+                    });
+                }
+            }
+            Effect::RemoveFlag(flag) => {
+                if let Some(entity_id) = target.as_entity_id() {
+                    writes.push(PendingWrite::RemoveFlag {
+                        entity_id,
+                        flag: flag.clone(),
+                    });
+                }
+            }
+            Effect::SpawnEntity { kind, properties } => {
+                // Evaluate all property expressions
+                let mut evaluated_props = ValueMap::new();
+                for (key, value_expr) in properties {
+                    let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                    match value_expr.eval(&mut ctx) {
+                        Ok(v) => {
+                            evaluated_props.insert(key.clone(), v);
+                        }
+                        Err(e) => Self::log_eval_error(result, &format!("SpawnEntity.{}", key), &e),
+                    }
+                }
+
+                writes.push(PendingWrite::SpawnEntity {
+                    kind: kind.clone(),
+                    properties: evaluated_props,
+                });
+            }
+            Effect::DestroyTarget => {
+                if let Some(id) = target.as_entity_id() {
+                    writes.push(PendingWrite::DestroyEntity { id });
+                }
+            }
+            Effect::DestroyEntity(entity_ref) => {
+                if let Some(id) = entity_ref.as_entity_id() {
+                    writes.push(PendingWrite::DestroyEntity { id });
+                }
+            }
+            Effect::EmitEvent {
+                event,
+                target: event_target,
+                params: event_params,
+            } => {
+                // Event emission goes to EffectResult, not WriteSet
+                let mut evaluated_params = ValueMap::new();
+                for (key, expr) in event_params {
+                    let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                    match expr.eval(&mut ctx) {
+                        Ok(v) => {
+                            evaluated_params.insert(key.clone(), v);
+                        }
+                        Err(e) => Self::log_eval_error(result, &format!("EmitEvent.{}", key), &e),
+                    }
+                }
+                result
+                    .emitted_events
+                    .push((event.clone(), event_target.clone(), evaluated_params));
+            }
+            Effect::ScheduleEvent {
+                event,
+                target: event_target,
+                delay_ticks,
+                params: event_params,
+            } => {
+                // Scheduled events go to EffectResult, not WriteSet
+                let mut ctx = Self::make_eval_context(model, &EntityRef::Global, params);
+                match delay_ticks.eval(&mut ctx) {
+                    Ok(delay_val) => {
+                        if let Some(delay) = delay_val.as_int() {
+                            let mut evaluated_params = ValueMap::new();
+                            for (key, expr) in event_params {
+                                let mut ctx =
+                                    Self::make_eval_context(model, &EntityRef::Global, params);
+                                match expr.eval(&mut ctx) {
+                                    Ok(v) => {
+                                        evaluated_params.insert(key.clone(), v);
+                                    }
+                                    Err(e) => Self::log_eval_error(
+                                        result,
+                                        &format!("ScheduleEvent.{}", key),
+                                        &e,
+                                    ),
+                                }
+                            }
+                            result.scheduled_events.push((
+                                event.clone(),
+                                event_target.clone(),
+                                delay as u64,
+                                evaluated_params,
+                            ));
+                        }
+                    }
+                    Err(e) => Self::log_eval_error(result, "ScheduleEvent.delay", &e),
+                }
+            }
+            Effect::If {
+                condition,
+                then_effects,
+                else_effects,
+            } => {
+                let mut ctx = Self::make_eval_context(model, target, params);
+                let cond_result = condition.eval(&mut ctx);
+
+                let effects = match cond_result {
+                    Ok(v) if v.is_truthy() => then_effects,
+                    Ok(_) => else_effects,
+                    Err(e) => {
+                        Self::log_eval_error(result, "If.condition", &e);
+                        else_effects // Default to else branch on error
+                    }
+                };
+
+                for eff in effects {
+                    let child_writes = self.collect_effect(model, eff, target, params, result);
+                    writes.extend(child_writes);
+                }
+            }
+            Effect::Sequence(effects) => {
+                for eff in effects {
+                    let child_writes = self.collect_effect(model, eff, target, params, result);
+                    writes.extend(child_writes);
+                }
+            }
+            Effect::ForEachEntity {
+                kind,
+                filter,
+                effects,
+            } => {
+                let entity_ids: Vec<_> = model.entities.by_kind(kind).map(|e| e.id).collect();
+
+                for entity_id in entity_ids {
+                    let entity_target = EntityRef::Entity(entity_id);
+
+                    // Check filter
+                    if let Some(filter_expr) = filter {
+                        let mut ctx = Self::make_eval_context(model, &entity_target, params);
+                        match filter_expr.eval(&mut ctx) {
+                            Ok(v) if !v.is_truthy() => continue,
+                            Ok(_) => {} // Passes filter
+                            Err(e) => {
+                                Self::log_eval_error(result, "ForEachEntity.filter", &e);
+                                continue; // Skip this entity on error
+                            }
+                        }
+                    }
+
+                    for eff in effects {
+                        let child_writes =
+                            self.collect_effect(model, eff, &entity_target, params, result);
+                        writes.extend(child_writes);
+                    }
+                }
+            }
+            Effect::RandomChoice { choices } => {
+                let mut weights = Vec::new();
+                for (i, (weight_expr, _)) in choices.iter().enumerate() {
+                    let mut ctx = Self::make_eval_context(model, target, params);
+                    let weight = match weight_expr.eval(&mut ctx) {
+                        Ok(v) => v.as_float().unwrap_or(0.0),
+                        Err(e) => {
+                            Self::log_eval_error(
+                                result,
+                                &format!("RandomChoice.weight[{}]", i),
+                                &e,
+                            );
+                            0.0
+                        }
+                    };
+                    weights.push(weight);
+                }
+
+                if let Some(index) = model.rng.weighted_index(&weights) {
+                    if let Some((_, effects)) = choices.get(index) {
+                        for eff in effects {
+                            let child_writes =
+                                self.collect_effect(model, eff, target, params, result);
+                            writes.extend(child_writes);
+                        }
+                    }
+                }
+            }
+            Effect::Log { level, message } => {
+                // Logs go to EffectResult, not WriteSet
+                let mut ctx = Self::make_eval_context(model, target, params);
+                match message.eval(&mut ctx) {
+                    Ok(v) => result.logs.push((*level, format!("{}", v))),
+                    Err(e) => Self::log_eval_error(result, "Log.message", &e),
+                }
+            }
+            Effect::Notify {
+                kind,
+                title,
+                message,
+                target: notify_target,
+            } => {
+                // Notifications go to EffectResult, not WriteSet
+                let mut ctx = Self::make_eval_context(model, target, params);
+                let title_str = match title.eval(&mut ctx) {
+                    Ok(v) => format!("{}", v),
+                    Err(e) => {
+                        Self::log_eval_error(result, "Notify.title", &e);
+                        String::new()
+                    }
+                };
+                let mut ctx = Self::make_eval_context(model, target, params);
+                let msg_str = match message.eval(&mut ctx) {
+                    Ok(v) => format!("{}", v),
+                    Err(e) => {
+                        Self::log_eval_error(result, "Notify.message", &e);
+                        String::new()
+                    }
+                };
+
+                result.notifications.push(crate::effect::Notification {
+                    kind: kind.clone(),
+                    title: title_str,
+                    message: msg_str,
+                    target: notify_target.clone(),
+                });
+            }
+            _ => {
+                // Handle remaining effect types (SetEntityProperty, etc.)
+                // These can be added as needed
+            }
+        }
+
+        writes
+    }
 }
 
 impl Default for Runtime {
@@ -678,6 +1061,163 @@ mod tests {
                 .get(entity_id)
                 .and_then(|e| e.get_number("gold")),
             Some(150.0)
+        );
+    }
+
+    #[test]
+    fn test_collect_effect_logs_eval_error_set_property() {
+        use crate::effect::{EffectResult, LogLevel};
+
+        let mut model = Model::new();
+        let mut runtime = Runtime::new();
+
+        // Create an entity
+        let entity = model.entities.create("test");
+        let entity_id = entity.id;
+
+        // Create effect with division by zero expression
+        let effect = Effect::SetProperty {
+            property: "value".to_string(),
+            value: Expr::Div(Box::new(Expr::lit(1.0)), Box::new(Expr::lit(0.0))), // Division by zero
+        };
+
+        let mut result = EffectResult::default();
+        let writes = runtime.collect_effect(
+            &mut model,
+            &effect,
+            &EntityRef::Entity(entity_id),
+            &ValueMap::new(),
+            &mut result,
+        );
+
+        // Should have logged a warning
+        assert!(
+            !result.logs.is_empty(),
+            "Expected a warning log for eval error"
+        );
+        let (level, msg) = &result.logs[0];
+        assert!(matches!(level, LogLevel::Warn));
+        assert!(
+            msg.contains("SetProperty"),
+            "Log should mention the effect type"
+        );
+        assert!(
+            msg.contains("eval error"),
+            "Log should mention it's an eval error"
+        );
+
+        // Write should be skipped
+        assert!(writes.is_empty(), "Write should be skipped on eval error");
+    }
+
+    #[test]
+    fn test_collect_effect_logs_eval_error_if_condition() {
+        use crate::effect::{EffectResult, LogLevel};
+
+        let mut model = Model::new();
+        let mut runtime = Runtime::new();
+
+        // Create effect with If condition that will fail (division by zero)
+        let effect = Effect::If {
+            condition: Expr::Div(Box::new(Expr::lit(1.0)), Box::new(Expr::lit(0.0))), // Division by zero
+            then_effects: vec![Effect::SetGlobal {
+                property: "then_ran".to_string(),
+                value: Expr::lit(1.0),
+            }],
+            else_effects: vec![Effect::SetGlobal {
+                property: "else_ran".to_string(),
+                value: Expr::lit(1.0),
+            }],
+        };
+
+        let mut result = EffectResult::default();
+        let writes = runtime.collect_effect(
+            &mut model,
+            &effect,
+            &EntityRef::Global,
+            &ValueMap::new(),
+            &mut result,
+        );
+
+        // Should have logged a warning for the condition eval error
+        assert!(
+            !result.logs.is_empty(),
+            "Expected a warning log for condition eval error"
+        );
+        let (level, msg) = &result.logs[0];
+        assert!(matches!(level, LogLevel::Warn));
+        assert!(
+            msg.contains("If.condition"),
+            "Log should mention If.condition"
+        );
+
+        // Should default to else branch on error
+        assert_eq!(writes.len(), 1);
+        let write = writes.iter().next().expect("Expected one write");
+        match write {
+            crate::write_set::PendingWrite::SetGlobal { key, .. } => {
+                assert_eq!(
+                    key, "else_ran",
+                    "Should execute else branch on condition error"
+                );
+            }
+            _ => panic!("Expected SetGlobal write"),
+        }
+    }
+
+    #[test]
+    fn test_collect_effect_logs_eval_error_for_each_filter() {
+        use crate::effect::{EffectResult, LogLevel};
+
+        let mut model = Model::new();
+        let mut runtime = Runtime::new();
+
+        // Create some entities
+        let e1 = model.entities.create("unit");
+        e1.set("health", 100.0f64);
+        let e2 = model.entities.create("unit");
+        e2.set("health", 50.0f64);
+
+        // Create ForEach with filter that will fail (division by zero)
+        let effect = Effect::ForEachEntity {
+            kind: DefId::new("unit"),
+            filter: Some(Expr::Div(
+                Box::new(Expr::lit(1.0)),
+                Box::new(Expr::lit(0.0)),
+            )), // Division by zero
+            effects: vec![Effect::ModifyProperty {
+                property: "health".to_string(),
+                op: ModifyOp::Add,
+                value: Expr::lit(10.0),
+            }],
+        };
+
+        let mut result = EffectResult::default();
+        let writes = runtime.collect_effect(
+            &mut model,
+            &effect,
+            &EntityRef::Global,
+            &ValueMap::new(),
+            &mut result,
+        );
+
+        // Should have logged warnings for each entity's filter eval error
+        assert!(
+            result.logs.len() >= 2,
+            "Expected warning logs for filter eval errors on both entities"
+        );
+        for (level, msg) in &result.logs {
+            assert!(matches!(level, LogLevel::Warn));
+            assert!(
+                msg.contains("ForEachEntity.filter"),
+                "Log should mention ForEachEntity.filter"
+            );
+        }
+
+        // Entities with failed filters should be skipped
+        assert!(
+            writes.is_empty(),
+            "Entities should be skipped when filter fails"
         );
     }
 }
