@@ -3,10 +3,18 @@
 //! When multiple cores execute in parallel, they may produce conflicting writes.
 //! This module detects such conflicts before merging WriteSets.
 //!
+//! # Architecture
+//!
+//! The conflict system uses a clean separation of concerns:
+//!
+//! - [`ConflictTarget`]: What was conflicted on (entity property, global, etc.)
+//! - [`ConflictType`]: Type of conflict (write-write, read-write in future)
+//! - [`Conflict`]: Full conflict record with target, type, cores, and writes
+//!
 //! # Conflict Types
 //!
 //! - **Write-Write**: Two different cores wrote to the same (entity, property) or global
-//! - **Read-Write** (optional, future): Core A read what Core B wrote
+//! - **Read-Write** (future): Core A read what Core B wrote
 //!
 //! # Algorithm
 //!
@@ -32,9 +40,13 @@ use std::collections::{HashMap, HashSet};
 // Re-export WriteSet for convenience in resolution result
 pub use pulsive_core::WriteSet as WriteSetCore;
 
-/// The target of a write operation - used as the key for conflict detection
+/// The target of a conflict - what resource was conflicted on
+///
+/// This enum identifies the specific resource (entity property, global, etc.)
+/// that multiple cores attempted to write to. It serves as both the key for
+/// conflict detection and part of the conflict report.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum WriteTarget {
+pub enum ConflictTarget {
     /// Property on a specific entity
     EntityProperty {
         entity_id: EntityId,
@@ -50,141 +62,83 @@ pub enum WriteTarget {
     DestroyEntity { entity_id: EntityId },
 }
 
-impl WriteTarget {
+impl ConflictTarget {
     /// Extract the target from a PendingWrite
     pub fn from_pending_write(write: &PendingWrite) -> Self {
         match write {
-            PendingWrite::SetProperty { entity_id, key, .. } => WriteTarget::EntityProperty {
+            PendingWrite::SetProperty { entity_id, key, .. } => ConflictTarget::EntityProperty {
                 entity_id: *entity_id,
                 property: key.clone(),
             },
-            PendingWrite::ModifyProperty { entity_id, key, .. } => WriteTarget::EntityProperty {
+            PendingWrite::ModifyProperty { entity_id, key, .. } => ConflictTarget::EntityProperty {
                 entity_id: *entity_id,
                 property: key.clone(),
             },
-            PendingWrite::SetGlobal { key, .. } => WriteTarget::GlobalProperty {
+            PendingWrite::SetGlobal { key, .. } => ConflictTarget::GlobalProperty {
                 property: key.clone(),
             },
-            PendingWrite::ModifyGlobal { key, .. } => WriteTarget::GlobalProperty {
+            PendingWrite::ModifyGlobal { key, .. } => ConflictTarget::GlobalProperty {
                 property: key.clone(),
             },
-            PendingWrite::AddFlag { entity_id, flag } => WriteTarget::EntityFlag {
+            PendingWrite::AddFlag { entity_id, flag } => ConflictTarget::EntityFlag {
                 entity_id: *entity_id,
                 flag: flag.clone(),
             },
-            PendingWrite::RemoveFlag { entity_id, flag } => WriteTarget::EntityFlag {
+            PendingWrite::RemoveFlag { entity_id, flag } => ConflictTarget::EntityFlag {
                 entity_id: *entity_id,
                 flag: flag.clone(),
             },
             PendingWrite::SpawnEntity { kind, .. } => {
-                WriteTarget::SpawnEntity { kind: kind.clone() }
+                ConflictTarget::SpawnEntity { kind: kind.clone() }
             }
-            PendingWrite::DestroyEntity { id } => WriteTarget::DestroyEntity { entity_id: *id },
+            PendingWrite::DestroyEntity { id } => ConflictTarget::DestroyEntity { entity_id: *id },
         }
     }
 }
 
-/// The kind of conflict detected
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConflictKind {
-    /// Two cores wrote to the same entity property
-    EntityPropertyWriteWrite {
-        entity_id: EntityId,
-        property: String,
-        core_a: CoreId,
-        core_b: CoreId,
-    },
-    /// Two cores modified the same entity flag
-    EntityFlagWriteWrite {
-        entity_id: EntityId,
-        flag: DefId,
-        core_a: CoreId,
-        core_b: CoreId,
-    },
-    /// Two cores wrote to the same global property
-    GlobalPropertyWriteWrite {
-        property: String,
-        core_a: CoreId,
-        core_b: CoreId,
-    },
-    /// Two cores spawned entities of the same kind
-    ///
-    /// This is often acceptable (multiple spawns are independent) but is
-    /// detected for cases where spawn order matters or needs coordination.
-    /// Use `default_conflict_filter` to exclude spawn conflicts if desired.
-    SpawnEntityWriteWrite {
-        kind: DefId,
-        core_a: CoreId,
-        core_b: CoreId,
-    },
-    /// Two cores tried to destroy the same entity
-    DestroyEntityWriteWrite {
-        entity_id: EntityId,
-        core_a: CoreId,
-        core_b: CoreId,
-    },
-}
-
-impl std::fmt::Display for ConflictKind {
+impl std::fmt::Display for ConflictTarget {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ConflictKind::EntityPropertyWriteWrite {
+            ConflictTarget::EntityProperty {
                 entity_id,
                 property,
-                core_a,
-                core_b,
-            } => {
-                write!(
-                    f,
-                    "Write-write conflict on entity {} property '{}' between {} and {}",
-                    entity_id, property, core_a, core_b
-                )
+            } => write!(f, "entity {} property '{}'", entity_id, property),
+            ConflictTarget::EntityFlag { entity_id, flag } => {
+                write!(f, "entity {} flag '{}'", entity_id, flag)
             }
-            ConflictKind::EntityFlagWriteWrite {
-                entity_id,
-                flag,
-                core_a,
-                core_b,
-            } => {
-                write!(
-                    f,
-                    "Write-write conflict on entity {} flag '{}' between {} and {}",
-                    entity_id, flag, core_a, core_b
-                )
+            ConflictTarget::GlobalProperty { property } => write!(f, "global '{}'", property),
+            ConflictTarget::SpawnEntity { kind } => write!(f, "spawn entity kind '{}'", kind),
+            ConflictTarget::DestroyEntity { entity_id } => {
+                write!(f, "destroy entity {}", entity_id)
             }
-            ConflictKind::GlobalPropertyWriteWrite {
-                property,
-                core_a,
-                core_b,
-            } => {
-                write!(
-                    f,
-                    "Write-write conflict on global '{}' between {} and {}",
-                    property, core_a, core_b
-                )
-            }
-            ConflictKind::SpawnEntityWriteWrite {
-                kind,
-                core_a,
-                core_b,
-            } => {
-                write!(
-                    f,
-                    "Write-write conflict: entity kind '{}' spawned by both {} and {}",
-                    kind, core_a, core_b
-                )
-            }
-            ConflictKind::DestroyEntityWriteWrite {
-                entity_id,
-                core_a,
-                core_b,
-            } => {
-                write!(
-                    f,
-                    "Write-write conflict: entity {} destroyed by both {} and {}",
-                    entity_id, core_a, core_b
-                )
-            }
+        }
+    }
+}
+
+/// The type of conflict detected
+///
+/// This enum classifies the nature of the conflict. Currently only write-write
+/// conflicts are detected, but the design allows for future read-write conflict
+/// detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum ConflictType {
+    /// Two or more cores wrote to the same target
+    #[default]
+    WriteWrite,
+    /// A core read a value that another core wrote (future)
+    ///
+    /// This variant is reserved for future read-write conflict detection.
+    /// When implemented, it will detect cases where Core A's read depends on
+    /// Core B's write, which can cause non-deterministic behavior.
+    #[doc(hidden)]
+    ReadWrite,
+}
+
+impl std::fmt::Display for ConflictType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConflictType::WriteWrite => write!(f, "write-write"),
+            ConflictType::ReadWrite => write!(f, "read-write"),
         }
     }
 }
@@ -192,30 +146,77 @@ impl std::fmt::Display for ConflictKind {
 /// A detected conflict with diagnostic information
 ///
 /// Contains all information needed for conflict resolution:
-/// - `kind`: The type of conflict with representative cores (first two by ID order)
+/// - `target`: The resource that was conflicted on
+/// - `conflict_type`: The type of conflict (write-write, read-write)
 /// - `cores`: All distinct cores involved (sorted by ID for deterministic output)
 /// - `writes`: All conflicting writes for debugging/resolution
+///
+/// # Example
+///
+/// ```ignore
+/// match &conflict.target {
+///     ConflictTarget::GlobalProperty { property } => {
+///         println!("{} conflict on {} between {:?}",
+///             conflict.conflict_type, property, conflict.cores);
+///     }
+///     // ...
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Conflict {
-    /// The kind of conflict (includes first two cores for quick identification)
-    pub kind: ConflictKind,
+    /// The target of the conflict (what resource was conflicted on)
+    pub target: ConflictTarget,
+
+    /// The type of conflict (write-write, read-write)
+    pub conflict_type: ConflictType,
+
     /// All distinct cores involved in this conflict (sorted by CoreId for determinism)
     pub cores: Vec<CoreId>,
+
     /// All conflicting writes from all cores (for debugging/resolution)
     pub writes: Vec<(CoreId, PendingWrite)>,
+
+    /// Reserved for future read-write conflict detection
+    ///
+    /// When read-write conflict detection is implemented, this field will contain
+    /// the reads that conflict with writes from other cores.
+    #[doc(hidden)]
+    pub reads: Vec<(CoreId, ReadRecord)>,
+}
+
+/// Record of a read operation (for future read-write conflict detection)
+#[derive(Debug, Clone, PartialEq)]
+#[doc(hidden)]
+pub struct ReadRecord {
+    /// The target that was read
+    pub target: ConflictTarget,
 }
 
 impl Conflict {
     /// Create a new conflict
+    ///
+    /// # Panics (debug mode)
+    ///
+    /// Panics if `cores` has fewer than 2 elements, as a conflict requires
+    /// at least two distinct cores.
     pub fn new(
-        kind: ConflictKind,
+        target: ConflictTarget,
+        conflict_type: ConflictType,
         cores: Vec<CoreId>,
         writes: Vec<(CoreId, PendingWrite)>,
     ) -> Self {
+        debug_assert!(
+            cores.len() >= 2,
+            "Conflict::new requires at least 2 cores, got {}",
+            cores.len()
+        );
+
         Self {
-            kind,
+            target,
+            conflict_type,
             cores,
             writes,
+            reads: Vec::new(),
         }
     }
 
@@ -223,11 +224,29 @@ impl Conflict {
     pub fn core_count(&self) -> usize {
         self.cores.len()
     }
+
+    /// Check if this is a write-write conflict
+    pub fn is_write_write(&self) -> bool {
+        self.conflict_type == ConflictType::WriteWrite
+    }
+
+    /// Check if this is a read-write conflict
+    pub fn is_read_write(&self) -> bool {
+        self.conflict_type == ConflictType::ReadWrite
+    }
 }
 
 impl std::fmt::Display for Conflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.kind)
+        // Format cores as a comma-separated list: "Core(0), Core(1)"
+        let cores_str: Vec<String> = self.cores.iter().map(|c| format!("{}", c)).collect();
+        write!(
+            f,
+            "{} conflict on {} between {}",
+            self.conflict_type,
+            self.target,
+            cores_str.join(", ")
+        )
     }
 }
 
@@ -280,7 +299,7 @@ impl ConflictReport {
 ///
 /// # Algorithm
 ///
-/// 1. Build a HashMap from `WriteTarget` to `Vec<(CoreId, PendingWrite)>`
+/// 1. Build a HashMap from `ConflictTarget` to `Vec<(CoreId, PendingWrite)>`
 /// 2. Any target with writes from multiple distinct cores is a conflict
 ///
 /// Note: Multiple writes from the *same* core to the same target are NOT conflicts.
@@ -298,12 +317,12 @@ impl ConflictReport {
 ///
 /// A `ConflictReport` containing all detected conflicts
 pub fn detect_conflicts(write_sets: &[(CoreId, WriteSet)]) -> ConflictReport {
-    let mut write_map: HashMap<WriteTarget, Vec<(CoreId, PendingWrite)>> = HashMap::new();
+    let mut write_map: HashMap<ConflictTarget, Vec<(CoreId, PendingWrite)>> = HashMap::new();
 
     // Phase 1: Collect all writes by target
     for (core_id, ws) in write_sets {
         for write in ws.iter() {
-            let target = WriteTarget::from_pending_write(write);
+            let target = ConflictTarget::from_pending_write(write);
             write_map
                 .entry(target)
                 .or_default()
@@ -320,7 +339,7 @@ pub fn detect_conflicts(write_sets: &[(CoreId, WriteSet)]) -> ConflictReport {
 
         // Only a conflict if at least two distinct cores wrote to the same target
         if distinct_cores.len() > 1 {
-            let conflict = create_conflict(&target, writes, distinct_cores);
+            let conflict = create_conflict(target, writes, distinct_cores);
             report.conflicts.push(conflict);
         }
     }
@@ -334,7 +353,7 @@ pub fn detect_conflicts(write_sets: &[(CoreId, WriteSet)]) -> ConflictReport {
 ///
 /// `distinct_cores` must contain at least 2 elements. This is enforced by a debug_assert.
 fn create_conflict(
-    target: &WriteTarget,
+    target: ConflictTarget,
     writes: Vec<(CoreId, PendingWrite)>,
     distinct_cores: HashSet<CoreId>,
 ) -> Conflict {
@@ -348,44 +367,8 @@ fn create_conflict(
     let mut sorted_cores: Vec<CoreId> = distinct_cores.into_iter().collect();
     sorted_cores.sort_by_key(|c| c.0);
 
-    // Use first two sorted cores for the ConflictKind
-    let core_a = sorted_cores[0];
-    let core_b = sorted_cores[1];
-
-    let kind = match target {
-        WriteTarget::EntityProperty {
-            entity_id,
-            property,
-        } => ConflictKind::EntityPropertyWriteWrite {
-            entity_id: *entity_id,
-            property: property.clone(),
-            core_a,
-            core_b,
-        },
-        WriteTarget::EntityFlag { entity_id, flag } => ConflictKind::EntityFlagWriteWrite {
-            entity_id: *entity_id,
-            flag: flag.clone(),
-            core_a,
-            core_b,
-        },
-        WriteTarget::GlobalProperty { property } => ConflictKind::GlobalPropertyWriteWrite {
-            property: property.clone(),
-            core_a,
-            core_b,
-        },
-        WriteTarget::SpawnEntity { kind } => ConflictKind::SpawnEntityWriteWrite {
-            kind: kind.clone(),
-            core_a,
-            core_b,
-        },
-        WriteTarget::DestroyEntity { entity_id } => ConflictKind::DestroyEntityWriteWrite {
-            entity_id: *entity_id,
-            core_a,
-            core_b,
-        },
-    };
-
-    Conflict::new(kind, sorted_cores, writes)
+    // Create conflict using the new API
+    Conflict::new(target, ConflictType::WriteWrite, sorted_cores, writes)
 }
 
 /// Detect conflicts with an option to exclude certain target types
@@ -395,13 +378,13 @@ fn create_conflict(
 /// Use `default_conflict_filter` to exclude spawn conflicts.
 pub fn detect_conflicts_filtered<F>(write_sets: &[(CoreId, WriteSet)], filter: F) -> ConflictReport
 where
-    F: Fn(&WriteTarget) -> bool,
+    F: Fn(&ConflictTarget) -> bool,
 {
-    let mut write_map: HashMap<WriteTarget, Vec<(CoreId, PendingWrite)>> = HashMap::new();
+    let mut write_map: HashMap<ConflictTarget, Vec<(CoreId, PendingWrite)>> = HashMap::new();
 
     for (core_id, ws) in write_sets {
         for write in ws.iter() {
-            let target = WriteTarget::from_pending_write(write);
+            let target = ConflictTarget::from_pending_write(write);
             if filter(&target) {
                 write_map
                     .entry(target)
@@ -419,7 +402,7 @@ where
 
         // Only a conflict if at least two distinct cores wrote to the same target
         if distinct_cores.len() > 1 {
-            let conflict = create_conflict(&target, writes, distinct_cores);
+            let conflict = create_conflict(target, writes, distinct_cores);
             report.conflicts.push(conflict);
         }
     }
@@ -428,8 +411,8 @@ where
 }
 
 /// Default filter that excludes spawn conflicts (which are usually acceptable)
-pub fn default_conflict_filter(target: &WriteTarget) -> bool {
-    !matches!(target, WriteTarget::SpawnEntity { .. })
+pub fn default_conflict_filter(target: &ConflictTarget) -> bool {
+    !matches!(target, ConflictTarget::SpawnEntity { .. })
 }
 
 // ============================================================================
@@ -544,7 +527,10 @@ pub struct ResolutionResult {
 #[derive(Debug, Clone)]
 pub struct ResolvedConflict {
     /// The target that had a conflict (e.g., which entity/property)
-    pub target: WriteTarget,
+    pub target: ConflictTarget,
+
+    /// The type of conflict that was resolved
+    pub conflict_type: ConflictType,
 
     /// The cores involved in the conflict (sorted by CoreId for determinism)
     ///
@@ -676,44 +662,15 @@ where
     F: Fn(&Conflict) -> Option<(CoreId, PendingWrite)>,
 {
     // Build a set of conflicting targets for quick lookup
-    let conflicting_targets: HashSet<WriteTarget> = report
-        .conflicts
-        .iter()
-        .map(|c| match &c.kind {
-            ConflictKind::EntityPropertyWriteWrite {
-                entity_id,
-                property,
-                ..
-            } => WriteTarget::EntityProperty {
-                entity_id: *entity_id,
-                property: property.clone(),
-            },
-            ConflictKind::EntityFlagWriteWrite {
-                entity_id, flag, ..
-            } => WriteTarget::EntityFlag {
-                entity_id: *entity_id,
-                flag: flag.clone(),
-            },
-            ConflictKind::GlobalPropertyWriteWrite { property, .. } => {
-                WriteTarget::GlobalProperty {
-                    property: property.clone(),
-                }
-            }
-            ConflictKind::SpawnEntityWriteWrite { kind, .. } => {
-                WriteTarget::SpawnEntity { kind: kind.clone() }
-            }
-            ConflictKind::DestroyEntityWriteWrite { entity_id, .. } => WriteTarget::DestroyEntity {
-                entity_id: *entity_id,
-            },
-        })
-        .collect();
+    let conflicting_targets: HashSet<ConflictTarget> =
+        report.conflicts.iter().map(|c| c.target.clone()).collect();
 
     let mut result = ResolutionResult::new(WriteSet::new());
 
     // First, add all non-conflicting writes
     for (_, ws) in write_sets {
         for write in ws.iter() {
-            let target = WriteTarget::from_pending_write(write);
+            let target = ConflictTarget::from_pending_write(write);
             if !conflicting_targets.contains(&target) {
                 result.write_set.push(write.clone());
             }
@@ -722,34 +679,6 @@ where
 
     // Then, resolve each conflict
     for conflict in &report.conflicts {
-        let target = match &conflict.kind {
-            ConflictKind::EntityPropertyWriteWrite {
-                entity_id,
-                property,
-                ..
-            } => WriteTarget::EntityProperty {
-                entity_id: *entity_id,
-                property: property.clone(),
-            },
-            ConflictKind::EntityFlagWriteWrite {
-                entity_id, flag, ..
-            } => WriteTarget::EntityFlag {
-                entity_id: *entity_id,
-                flag: flag.clone(),
-            },
-            ConflictKind::GlobalPropertyWriteWrite { property, .. } => {
-                WriteTarget::GlobalProperty {
-                    property: property.clone(),
-                }
-            }
-            ConflictKind::SpawnEntityWriteWrite { kind, .. } => {
-                WriteTarget::SpawnEntity { kind: kind.clone() }
-            }
-            ConflictKind::DestroyEntityWriteWrite { entity_id, .. } => WriteTarget::DestroyEntity {
-                entity_id: *entity_id,
-            },
-        };
-
         let resolved_write = picker(conflict);
 
         if let Some((_, write)) = &resolved_write {
@@ -757,7 +686,8 @@ where
         }
 
         result.add_resolution(ResolvedConflict {
-            target,
+            target: conflict.target.clone(),
+            conflict_type: conflict.conflict_type,
             cores: conflict.cores.clone(),
             resolved_write,
         });
@@ -930,22 +860,15 @@ mod tests {
         assert!(report.has_conflicts());
         assert_eq!(report.len(), 1);
 
-        match &report.conflicts[0].kind {
-            ConflictKind::GlobalPropertyWriteWrite {
-                property,
-                core_a,
-                core_b,
-            } => {
+        let conflict = &report.conflicts[0];
+        match &conflict.target {
+            ConflictTarget::GlobalProperty { property } => {
                 assert_eq!(property, "gold");
-                // Cores are now sorted, so ordering is deterministic
-                assert_eq!(*core_a, CoreId(0));
-                assert_eq!(*core_b, CoreId(1));
             }
-            _ => panic!("Expected GlobalPropertyWriteWrite"),
+            _ => panic!("Expected GlobalProperty target"),
         }
-
-        // Also check the cores field
-        assert_eq!(report.conflicts[0].cores, vec![CoreId(0), CoreId(1)]);
+        assert_eq!(conflict.conflict_type, ConflictType::WriteWrite);
+        assert_eq!(conflict.cores, vec![CoreId(0), CoreId(1)]);
     }
 
     #[test]
@@ -971,16 +894,15 @@ mod tests {
         assert!(report.has_conflicts());
         assert_eq!(report.len(), 1);
 
-        match &report.conflicts[0].kind {
-            ConflictKind::EntityPropertyWriteWrite {
+        match &report.conflicts[0].target {
+            ConflictTarget::EntityProperty {
                 entity_id: eid,
                 property,
-                ..
             } => {
                 assert_eq!(*eid, entity_id);
                 assert_eq!(property, "health");
             }
-            _ => panic!("Expected EntityPropertyWriteWrite"),
+            _ => panic!("Expected EntityProperty target"),
         }
     }
 
@@ -1005,16 +927,15 @@ mod tests {
         assert!(report.has_conflicts());
         assert_eq!(report.len(), 1);
 
-        match &report.conflicts[0].kind {
-            ConflictKind::EntityFlagWriteWrite {
+        match &report.conflicts[0].target {
+            ConflictTarget::EntityFlag {
                 entity_id: eid,
                 flag: f,
-                ..
             } => {
                 assert_eq!(*eid, entity_id);
                 assert_eq!(*f, flag);
             }
-            _ => panic!("Expected EntityFlagWriteWrite"),
+            _ => panic!("Expected EntityFlag target"),
         }
     }
 
@@ -1032,11 +953,11 @@ mod tests {
         assert!(report.has_conflicts());
         assert_eq!(report.len(), 1);
 
-        match &report.conflicts[0].kind {
-            ConflictKind::DestroyEntityWriteWrite { entity_id: eid, .. } => {
+        match &report.conflicts[0].target {
+            ConflictTarget::DestroyEntity { entity_id: eid } => {
                 assert_eq!(*eid, entity_id);
             }
-            _ => panic!("Expected DestroyEntityWriteWrite"),
+            _ => panic!("Expected DestroyEntity target"),
         }
     }
 
@@ -1096,6 +1017,11 @@ mod tests {
         assert_eq!(report.len(), 1);
         // All 3 writes should be in the conflict
         assert_eq!(report.conflicts[0].writes.len(), 3);
+        // All 3 cores should be listed
+        assert_eq!(
+            report.conflicts[0].cores,
+            vec![CoreId(0), CoreId(1), CoreId(2)]
+        );
     }
 
     #[test]
@@ -1119,12 +1045,12 @@ mod tests {
         assert!(report.has_conflicts());
         assert_eq!(report.len(), 1);
 
-        // Verify it's a SpawnEntityWriteWrite conflict
-        match &report.conflicts[0].kind {
-            ConflictKind::SpawnEntityWriteWrite { kind: k, .. } => {
+        // Verify it's a SpawnEntity conflict
+        match &report.conflicts[0].target {
+            ConflictTarget::SpawnEntity { kind: k } => {
                 assert_eq!(k.as_str(), "unit");
             }
-            _ => panic!("Expected SpawnEntityWriteWrite"),
+            _ => panic!("Expected SpawnEntity target"),
         }
 
         // Filtered version excludes spawns
@@ -1138,23 +1064,24 @@ mod tests {
     #[test]
     fn test_conflict_display() {
         let conflict = Conflict::new(
-            ConflictKind::GlobalPropertyWriteWrite {
+            ConflictTarget::GlobalProperty {
                 property: "gold".to_string(),
-                core_a: CoreId(0),
-                core_b: CoreId(1),
             },
+            ConflictType::WriteWrite,
             vec![CoreId(0), CoreId(1)],
             vec![],
         );
 
         let display = format!("{}", conflict);
         assert!(display.contains("gold"));
+        assert!(display.contains("write-write"));
+        // Should now include actual core IDs
         assert!(display.contains("Core(0)"));
         assert!(display.contains("Core(1)"));
     }
 
     #[test]
-    fn test_write_target_extraction() {
+    fn test_conflict_target_extraction() {
         let entity_id = EntityId::new(42);
 
         // SetProperty
@@ -1163,10 +1090,10 @@ mod tests {
             key: "health".to_string(),
             value: Value::Float(100.0),
         };
-        let target = WriteTarget::from_pending_write(&write);
+        let target = ConflictTarget::from_pending_write(&write);
         assert!(matches!(
             target,
-            WriteTarget::EntityProperty {
+            ConflictTarget::EntityProperty {
                 entity_id: _,
                 property
             } if property == "health"
@@ -1178,18 +1105,18 @@ mod tests {
             op: ModifyOp::Add,
             value: 10.0,
         };
-        let target = WriteTarget::from_pending_write(&write);
+        let target = ConflictTarget::from_pending_write(&write);
         assert!(matches!(
             target,
-            WriteTarget::GlobalProperty { property } if property == "gold"
+            ConflictTarget::GlobalProperty { property } if property == "gold"
         ));
 
         // DestroyEntity
         let write = PendingWrite::DestroyEntity { id: entity_id };
-        let target = WriteTarget::from_pending_write(&write);
+        let target = ConflictTarget::from_pending_write(&write);
         assert!(matches!(
             target,
-            WriteTarget::DestroyEntity { entity_id: eid } if eid == entity_id
+            ConflictTarget::DestroyEntity { entity_id: eid } if eid == entity_id
         ));
     }
 
@@ -1269,19 +1196,12 @@ mod tests {
         // All 3 writes should be in the conflict for diagnostics
         assert_eq!(report.conflicts[0].writes.len(), 3);
 
-        // The conflict kind should mention both distinct cores (sorted order)
-        match &report.conflicts[0].kind {
-            ConflictKind::GlobalPropertyWriteWrite {
-                property,
-                core_a,
-                core_b,
-            } => {
+        // Use new API to verify conflict
+        match &report.conflicts[0].target {
+            ConflictTarget::GlobalProperty { property } => {
                 assert_eq!(property, "gold");
-                // Cores are now sorted deterministically
-                assert_eq!(*core_a, CoreId(0));
-                assert_eq!(*core_b, CoreId(1));
             }
-            _ => panic!("Expected GlobalPropertyWriteWrite"),
+            _ => panic!("Expected GlobalProperty target"),
         }
 
         // Check all cores are in the cores field
@@ -1328,18 +1248,17 @@ mod tests {
     #[test]
     fn test_spawn_conflict_display() {
         let conflict = Conflict::new(
-            ConflictKind::SpawnEntityWriteWrite {
+            ConflictTarget::SpawnEntity {
                 kind: DefId::new("unit"),
-                core_a: CoreId(0),
-                core_b: CoreId(1),
             },
+            ConflictType::WriteWrite,
             vec![CoreId(0), CoreId(1)],
             vec![],
         );
 
         let display = format!("{}", conflict);
         assert!(display.contains("unit"));
-        assert!(display.contains("spawned"));
+        assert!(display.contains("spawn"));
         assert!(display.contains("Core(0)"));
         assert!(display.contains("Core(1)"));
     }
@@ -1352,7 +1271,7 @@ mod tests {
     fn test_custom_filter_exclude_globals() {
         // Custom filter that excludes global property conflicts
         let exclude_globals =
-            |target: &WriteTarget| !matches!(target, WriteTarget::GlobalProperty { .. });
+            |target: &ConflictTarget| !matches!(target, ConflictTarget::GlobalProperty { .. });
 
         let entity_id = EntityId::new(42);
 
@@ -1389,8 +1308,8 @@ mod tests {
             detect_conflicts_filtered(&[(CoreId(0), ws1), (CoreId(1), ws2)], exclude_globals);
         assert_eq!(report_filtered.len(), 1);
         assert!(matches!(
-            &report_filtered.conflicts[0].kind,
-            ConflictKind::EntityPropertyWriteWrite { .. }
+            &report_filtered.conflicts[0].target,
+            ConflictTarget::EntityProperty { .. }
         ));
     }
 
@@ -1398,7 +1317,7 @@ mod tests {
     fn test_custom_filter_only_destroys() {
         // Custom filter that only includes destroy conflicts
         let only_destroys =
-            |target: &WriteTarget| matches!(target, WriteTarget::DestroyEntity { .. });
+            |target: &ConflictTarget| matches!(target, ConflictTarget::DestroyEntity { .. });
 
         let entity_id = EntityId::new(42);
 
@@ -1421,8 +1340,8 @@ mod tests {
             detect_conflicts_filtered(&[(CoreId(0), ws1), (CoreId(1), ws2)], only_destroys);
         assert_eq!(report.len(), 1);
         assert!(matches!(
-            &report.conflicts[0].kind,
-            ConflictKind::DestroyEntityWriteWrite { .. }
+            &report.conflicts[0].target,
+            ConflictTarget::DestroyEntity { .. }
         ));
     }
 
@@ -1469,14 +1388,11 @@ mod tests {
             vec![CoreId(0), CoreId(1), CoreId(2)]
         );
 
-        // ConflictKind should have core_a=0, core_b=1 (first two sorted)
-        match &report1.conflicts[0].kind {
-            ConflictKind::GlobalPropertyWriteWrite { core_a, core_b, .. } => {
-                assert_eq!(*core_a, CoreId(0));
-                assert_eq!(*core_b, CoreId(1));
-            }
-            _ => panic!("Expected GlobalPropertyWriteWrite"),
-        }
+        // Verify target is correct
+        assert!(matches!(
+            &report1.conflicts[0].target,
+            ConflictTarget::GlobalProperty { property } if property == "gold"
+        ));
     }
 
     #[test]
@@ -1939,8 +1855,8 @@ mod tests {
         // This test verifies ConflictReport can be safely shared across threads
         _assert_send_sync::<ConflictReport>();
         _assert_send_sync::<Conflict>();
-        _assert_send_sync::<ConflictKind>();
-        _assert_send_sync::<WriteTarget>();
+        _assert_send_sync::<ConflictTarget>();
+        _assert_send_sync::<ConflictType>();
         _assert_send_sync::<ResolutionResult>();
         _assert_send_sync::<ResolvedConflict>();
     }
@@ -2012,5 +1928,162 @@ mod tests {
 
         let err = crate::Error::GroupNotFound(crate::GroupId(42));
         assert!(err.conflict_report().is_none());
+    }
+
+    // ========================================================================
+    // New API Tests (ConflictTarget, ConflictType)
+    // ========================================================================
+
+    #[test]
+    fn test_new_api_conflict_target() {
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let report = detect_conflicts(&[(CoreId(0), ws1), (CoreId(1), ws2)]);
+        assert!(report.has_conflicts());
+
+        // Use new API to access conflict details
+        let conflict = &report.conflicts[0];
+        assert!(matches!(
+            conflict.target,
+            ConflictTarget::GlobalProperty { property: _ }
+        ));
+        assert_eq!(conflict.conflict_type, ConflictType::WriteWrite);
+        assert_eq!(conflict.cores, vec![CoreId(0), CoreId(1)]);
+
+        // Verify target content
+        if let ConflictTarget::GlobalProperty { property } = &conflict.target {
+            assert_eq!(property, "gold");
+        } else {
+            panic!("Expected GlobalProperty target");
+        }
+    }
+
+    #[test]
+    fn test_new_api_conflict_target_entity_property() {
+        let entity_id = EntityId::new(42);
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetProperty {
+            entity_id,
+            key: "health".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetProperty {
+            entity_id,
+            key: "health".to_string(),
+            value: Value::Float(50.0),
+        });
+
+        let report = detect_conflicts(&[(CoreId(0), ws1), (CoreId(1), ws2)]);
+        let conflict = &report.conflicts[0];
+
+        // Use new API
+        match &conflict.target {
+            ConflictTarget::EntityProperty {
+                entity_id: eid,
+                property,
+            } => {
+                assert_eq!(*eid, entity_id);
+                assert_eq!(property, "health");
+            }
+            _ => panic!("Expected EntityProperty target"),
+        }
+        assert_eq!(conflict.conflict_type, ConflictType::WriteWrite);
+    }
+
+    #[test]
+    fn test_new_api_conflict_type_display() {
+        assert_eq!(format!("{}", ConflictType::WriteWrite), "write-write");
+        assert_eq!(format!("{}", ConflictType::ReadWrite), "read-write");
+    }
+
+    #[test]
+    fn test_new_api_conflict_target_display() {
+        let target = ConflictTarget::GlobalProperty {
+            property: "gold".to_string(),
+        };
+        assert_eq!(format!("{}", target), "global 'gold'");
+
+        let target = ConflictTarget::EntityProperty {
+            entity_id: EntityId::new(42),
+            property: "health".to_string(),
+        };
+        assert!(format!("{}", target).contains("entity"));
+        assert!(format!("{}", target).contains("health"));
+
+        let target = ConflictTarget::SpawnEntity {
+            kind: DefId::new("unit"),
+        };
+        assert!(format!("{}", target).contains("spawn"));
+        assert!(format!("{}", target).contains("unit"));
+    }
+
+    #[test]
+    fn test_new_api_conflict_type_default() {
+        let default_type = ConflictType::default();
+        assert_eq!(default_type, ConflictType::WriteWrite);
+    }
+
+    #[test]
+    fn test_new_api_conflict_helper_methods() {
+        let conflict = Conflict::new(
+            ConflictTarget::GlobalProperty {
+                property: "gold".to_string(),
+            },
+            ConflictType::WriteWrite,
+            vec![CoreId(0), CoreId(1)],
+            vec![],
+        );
+
+        assert!(conflict.is_write_write());
+        assert!(!conflict.is_read_write());
+        assert_eq!(conflict.core_count(), 2);
+    }
+
+    #[test]
+    fn test_new_api_resolution_includes_conflict_type() {
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let write_sets = vec![(CoreId(0), ws0), (CoreId(1), ws1)];
+
+        let result = resolve_conflicts(&write_sets, &ResolutionStrategy::FirstWriteWins).unwrap();
+        assert_eq!(result.resolutions.len(), 1);
+
+        // Check that resolution includes conflict type
+        let resolution = &result.resolutions[0];
+        assert_eq!(resolution.conflict_type, ConflictType::WriteWrite);
+        assert!(matches!(
+            resolution.target,
+            ConflictTarget::GlobalProperty { .. }
+        ));
+    }
+
+    #[test]
+    fn test_send_sync_for_types() {
+        _assert_send_sync::<ConflictTarget>();
+        _assert_send_sync::<ConflictType>();
+        _assert_send_sync::<ReadRecord>();
     }
 }
