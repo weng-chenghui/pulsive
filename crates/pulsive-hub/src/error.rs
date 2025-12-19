@@ -30,7 +30,7 @@ pub enum Error {
     /// The `report` field contains the full conflict details (boxed to avoid
     /// large error sizes during propagation). Use [`Error::conflict_report()`]
     /// for convenient access.
-    #[error("unresolved conflicts: {count} conflict(s) detected")]
+    #[error("unresolved conflicts: {}", Self::format_conflict_count(*.count))]
     UnresolvedConflicts {
         /// Number of conflicts detected
         count: usize,
@@ -57,6 +57,15 @@ impl Error {
         match self {
             Error::UnresolvedConflicts { report, .. } => Some(report),
             _ => None,
+        }
+    }
+
+    /// Format conflict count with proper pluralization
+    fn format_conflict_count(count: usize) -> String {
+        if count == 1 {
+            "1 conflict detected".to_string()
+        } else {
+            format!("{} conflicts detected", count)
         }
     }
 }

@@ -240,7 +240,12 @@ pub struct ConflictReport {
 
 impl std::fmt::Display for ConflictReport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} conflict(s)", self.conflicts.len())
+        let count = self.conflicts.len();
+        if count == 1 {
+            write!(f, "1 conflict")
+        } else {
+            write!(f, "{} conflicts", count)
+        }
     }
 }
 
@@ -509,24 +514,51 @@ impl std::fmt::Debug for ResolutionStrategy {
 }
 
 /// Result of conflict resolution
+///
+/// Contains the merged WriteSet with all conflicts resolved, plus an audit trail
+/// of how each conflict was resolved for debugging and logging purposes.
 #[derive(Debug, Clone)]
 pub struct ResolutionResult {
     /// The resolved WriteSet (conflicts have been resolved)
+    ///
+    /// Contains all non-conflicting writes from all cores, plus the winning
+    /// write for each conflict (as determined by the resolution strategy).
     pub write_set: WriteSet,
+
     /// Number of conflicts that were resolved
     pub conflicts_resolved: usize,
+
     /// Details of each resolution (for auditing/debugging)
+    ///
+    /// Each entry corresponds to one conflict that was resolved. The order
+    /// matches the order in which conflicts were processed (which may vary
+    /// between runs due to HashMap iteration order).
     pub resolutions: Vec<ResolvedConflict>,
 }
 
 /// Details about how a conflict was resolved
+///
+/// Provides an audit trail for each resolved conflict, useful for debugging
+/// and logging. This allows consumers to understand which writes were in
+/// conflict and which one was selected.
 #[derive(Debug, Clone)]
 pub struct ResolvedConflict {
-    /// The target that had a conflict
+    /// The target that had a conflict (e.g., which entity/property)
     pub target: WriteTarget,
-    /// The cores involved in the conflict
+
+    /// The cores involved in the conflict (sorted by CoreId for determinism)
+    ///
+    /// This matches the `cores` field from the original `Conflict` that was
+    /// resolved. The order is deterministic (sorted by CoreId).
     pub cores: Vec<CoreId>,
-    /// The winning write (if any)
+
+    /// The winning write selected by the resolution strategy
+    ///
+    /// - `Some((core_id, write))`: The write that was selected, along with
+    ///   which core it came from. For merge strategies, `core_id` is the
+    ///   lowest CoreId involved (used as a representative owner).
+    /// - `None`: The conflict was resolved by skipping/dropping the write
+    ///   (only possible with custom resolvers that return `None`).
     pub resolved_write: Option<(CoreId, PendingWrite)>,
 }
 
@@ -735,6 +767,19 @@ where
 }
 
 /// Helper function for merge strategy - combines compatible operations
+///
+/// # Merge Behavior
+///
+/// - **Add operations**: All values are summed (e.g., Add(10) + Add(20) = Add(30))
+/// - **Sub operations**: All values are summed (e.g., Sub(5) + Sub(10) = Sub(15))
+/// - **Non-mergeable operations**: Falls back to FirstWriteWins
+///
+/// # Core Attribution
+///
+/// For merged writes, the resulting write is attributed to the lowest CoreId
+/// involved in the conflict (`conflict.cores[0]`). This is a representative
+/// owner for audit purposes - the actual write is a combination of all cores'
+/// contributions.
 fn resolve_with_merge(
     write_sets: &[(CoreId, WriteSet)],
     report: &ConflictReport,
@@ -770,11 +815,11 @@ fn resolve_with_merge(
         });
 
         if all_add {
-            // Sum all Add values
+            // Sum all Add values; attribute merged write to lowest CoreId
             let merged = merge_modify_writes(&conflict.writes, ModifyOp::Add);
             merged.map(|w| (conflict.cores[0], w))
         } else if all_sub {
-            // Sum all Sub values
+            // Sum all Sub values; attribute merged write to lowest CoreId
             let merged = merge_modify_writes(&conflict.writes, ModifyOp::Sub);
             merged.map(|w| (conflict.cores[0], w))
         } else {
