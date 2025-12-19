@@ -83,11 +83,11 @@ impl Interpolator {
         let alpha_f64 = alpha as f64;
 
         // Interpolate entity properties
-        for entity in result.entities.iter_mut() {
+        for entity in result.entities_mut().iter_mut() {
             let entity_id = entity.id;
 
             // Try to find corresponding entity in previous state
-            if let Some(prev_entity) = prev.entities.get(entity_id) {
+            if let Some(prev_entity) = prev.entities().get(entity_id) {
                 // Interpolate numeric properties
                 for (key, curr_value) in entity.properties.iter_mut() {
                     if let Some(prev_value) = prev_entity.get(key) {
@@ -98,8 +98,8 @@ impl Interpolator {
         }
 
         // Interpolate global properties
-        for (key, curr_value) in result.globals.iter_mut() {
-            if let Some(prev_value) = prev.globals.get(key) {
+        for (key, curr_value) in result.globals_mut().iter_mut() {
+            if let Some(prev_value) = prev.globals().get(key) {
                 *curr_value = Self::interpolate_value(prev_value, curr_value, alpha_f64);
             }
         }

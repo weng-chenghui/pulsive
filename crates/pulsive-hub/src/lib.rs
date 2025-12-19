@@ -38,7 +38,7 @@ mod hub;
 mod snapshot;
 mod tick_sync;
 
-pub use commit::{apply, apply_batch};
+pub use commit::{apply, apply_batch, commit, commit_batch, has_conflicts, CommitResult};
 pub use conflict::{
     default_conflict_filter, detect_conflicts, detect_conflicts_filtered, resolve_conflicts,
     Conflict, ConflictReport, ConflictResolver, ConflictTarget, ConflictType, ResolutionResult,

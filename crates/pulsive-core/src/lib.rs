@@ -58,5 +58,8 @@ pub use time::{Clock, Speed, Tick, Timestamp};
 pub use value::{Value, ValueMap};
 pub use write_set::{PendingWrite, WriteSet, WriteSetResult};
 
+// Re-export indexmap for consumers that need it with actor maps
+pub use indexmap::IndexMap;
+
 #[cfg(feature = "journal")]
 pub use journal::{Journal, JournalConfig, JournalEntry, JournalStats, Snapshot, SnapshotId};

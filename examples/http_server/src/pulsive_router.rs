@@ -72,7 +72,7 @@ impl PulsiveRouter {
 
         // Create route entities from config
         for (idx, loc) in server_config.locations.iter().enumerate() {
-            let entity = model.entities.create("route");
+            let entity = model.entities_mut().create("route");
 
             // Store route properties in the entity
             entity.set("path", Value::String(loc.path.clone()));
@@ -164,7 +164,7 @@ impl PulsiveRouter {
             if let Some((captures, rewritten)) = self.matches_route(route, path) {
                 // Update route hit count in the model
                 let current_tick = model.current_tick();
-                if let Some(entity) = model.entities.get_mut(route.entity_id) {
+                if let Some(entity) = model.entities_mut().get_mut(route.entity_id) {
                     let hits = entity.get_number("hits").unwrap_or(0.0) as i64;
                     entity.set("hits", Value::Int(hits + 1));
                     entity.set("last_hit_tick", Value::Int(current_tick as i64));
@@ -250,7 +250,7 @@ impl PulsiveRouter {
         // Iterate through route entities and evaluate conditions
         for route in &self.routes {
             // Get the entity to check its state
-            if let Some(entity) = model.entities.get(route.entity_id) {
+            if let Some(entity) = model.entities().get(route.entity_id) {
                 // For prefix routes, we can use Expr to compare path lengths
                 // This demonstrates using Expr::Ge for condition checking
                 let matches = if route.is_regex {
@@ -274,8 +274,12 @@ impl PulsiveRouter {
                     // Create context for evaluation
                     let empty_params = pulsive_core::ValueMap::new();
                     let mut rng = pulsive_core::Rng::new(0);
-                    let mut ctx =
-                        EvalContext::new(&model.entities, &model.globals, &empty_params, &mut rng);
+                    let mut ctx = EvalContext::new(
+                        model.entities(),
+                        model.globals(),
+                        &empty_params,
+                        &mut rng,
+                    );
                     ctx.target = Some(entity);
 
                     // Evaluate condition using pulsive's expression engine
@@ -288,7 +292,7 @@ impl PulsiveRouter {
                 if matches {
                     // Route matches! Update stats
                     let current_tick = model.current_tick();
-                    if let Some(entity) = model.entities.get_mut(route.entity_id) {
+                    if let Some(entity) = model.entities_mut().get_mut(route.entity_id) {
                         let hits = entity.get_number("expr_hits").unwrap_or(0.0) as i64;
                         entity.set("expr_hits", Value::Int(hits + 1));
                         entity.set("last_expr_hit_tick", Value::Int(current_tick as i64));
@@ -348,7 +352,7 @@ impl PulsiveRouter {
             .iter()
             .filter_map(|route| {
                 model
-                    .entities
+                    .entities()
                     .get(route.entity_id)
                     .map(|entity| RouteStats {
                         path: route.path.clone(),

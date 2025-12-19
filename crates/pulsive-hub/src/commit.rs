@@ -1,20 +1,81 @@
 //! WriteSet application and commit functionality
 //!
-//! This module provides the `apply()` function for applying WriteSets to the Model.
-//! The Hub is responsible for applying writes - cores only collect them.
+//! This module provides functions for applying WriteSets to the Model:
+//!
+//! - [`apply`]: Apply a single WriteSet directly (no conflict checking)
+//! - [`apply_batch`]: Apply multiple WriteSets merged together (no conflict checking)
+//! - [`commit`]: Commit a WriteSet with version tracking
+//! - [`commit_batch`]: Commit multiple WriteSets with conflict detection/resolution
 //!
 //! # Design
 //!
 //! - `WriteSet` and `PendingWrite` types are defined in `pulsive-core`
-//! - `apply()` lives here in `pulsive-hub` because the Hub owns the Model
+//! - `apply()` and commit functions live here in `pulsive-hub` because the Hub owns the Model
 //! - This separation enables conflict detection and resolution before applying
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use pulsive_hub::{commit_batch, ResolutionStrategy, CoreId};
+//!
+//! // Collect WriteSets from multiple cores
+//! let write_sets = vec![
+//!     (CoreId(0), core0_writes),
+//!     (CoreId(1), core1_writes),
+//! ];
+//!
+//! // Commit with conflict resolution
+//! let result = commit_batch(
+//!     write_sets,
+//!     &mut model,
+//!     &mut version,
+//!     &ResolutionStrategy::LastWriteWins,
+//! )?;
+//!
+//! println!("Committed version {}, {} conflicts resolved",
+//!     result.version, result.conflicts_resolved);
+//! ```
 
-use pulsive_core::{Model, PendingWrite, Value, WriteSet, WriteSetResult};
+use crate::conflict::{detect_conflicts, resolve_conflicts, ResolutionStrategy};
+use crate::{CoreId, Result};
+use pulsive_core::{EntityId, Model, PendingWrite, Value, WriteSet, WriteSetResult};
+
+/// Result of a successful commit operation
+#[derive(Debug, Clone, Default)]
+pub struct CommitResult {
+    /// The version number after this commit
+    pub version: u64,
+    /// Entity IDs that were spawned
+    pub spawned: Vec<EntityId>,
+    /// Entity IDs that were destroyed
+    pub destroyed: Vec<EntityId>,
+    /// Number of conflicts that were resolved (0 for single WriteSet)
+    pub conflicts_resolved: usize,
+}
+
+impl CommitResult {
+    /// Create a new empty commit result
+    pub fn new(version: u64) -> Self {
+        Self {
+            version,
+            ..Default::default()
+        }
+    }
+
+    /// Merge write set result into this commit result
+    pub fn merge_write_result(&mut self, result: WriteSetResult) {
+        self.spawned.extend(result.spawned);
+        self.destroyed.extend(result.destroyed);
+    }
+}
 
 /// Apply a WriteSet to a Model
 ///
 /// This function applies all pending writes from a WriteSet atomically
 /// to the given model. The writes are applied in order.
+///
+/// This is a low-level function that does not perform conflict detection.
+/// For parallel execution, use [`commit_batch`] instead.
 ///
 /// # Arguments
 ///
@@ -36,7 +97,7 @@ pub fn apply(write_set: &WriteSet, model: &mut Model) -> WriteSetResult {
                 key,
                 value,
             } => {
-                if let Some(entity) = model.entities.get_mut(*entity_id) {
+                if let Some(entity) = model.entities_mut().get_mut(*entity_id) {
                     entity.set(key.clone(), value.clone());
                 }
             }
@@ -47,7 +108,7 @@ pub fn apply(write_set: &WriteSet, model: &mut Model) -> WriteSetResult {
                 op,
                 value,
             } => {
-                if let Some(entity) = model.entities.get_mut(*entity_id) {
+                if let Some(entity) = model.entities_mut().get_mut(*entity_id) {
                     let current = entity.get_number(key).unwrap_or(0.0);
                     let new_value = op.apply(current, *value);
                     entity.set(key.clone(), new_value);
@@ -55,33 +116,35 @@ pub fn apply(write_set: &WriteSet, model: &mut Model) -> WriteSetResult {
             }
 
             PendingWrite::SetGlobal { key, value } => {
-                model.globals.insert(key.clone(), value.clone());
+                model.globals_mut().insert(key.clone(), value.clone());
             }
 
             PendingWrite::ModifyGlobal { key, op, value } => {
                 let current = model
-                    .globals
+                    .globals()
                     .get(key)
                     .and_then(|v| v.as_float())
                     .unwrap_or(0.0);
                 let new_value = op.apply(current, *value);
-                model.globals.insert(key.clone(), Value::Float(new_value));
+                model
+                    .globals_mut()
+                    .insert(key.clone(), Value::Float(new_value));
             }
 
             PendingWrite::AddFlag { entity_id, flag } => {
-                if let Some(entity) = model.entities.get_mut(*entity_id) {
+                if let Some(entity) = model.entities_mut().get_mut(*entity_id) {
                     entity.add_flag(flag.clone());
                 }
             }
 
             PendingWrite::RemoveFlag { entity_id, flag } => {
-                if let Some(entity) = model.entities.get_mut(*entity_id) {
+                if let Some(entity) = model.entities_mut().get_mut(*entity_id) {
                     entity.remove_flag(flag);
                 }
             }
 
             PendingWrite::SpawnEntity { kind, properties } => {
-                let entity = model.entities.create(kind.clone());
+                let entity = model.entities_mut().create(kind.clone());
                 let entity_id = entity.id;
 
                 // Set initial properties
@@ -93,7 +156,7 @@ pub fn apply(write_set: &WriteSet, model: &mut Model) -> WriteSetResult {
             }
 
             PendingWrite::DestroyEntity { id } => {
-                model.entities.remove(*id);
+                model.entities_mut().remove(*id);
                 result.destroyed.push(*id);
             }
         }
@@ -104,15 +167,123 @@ pub fn apply(write_set: &WriteSet, model: &mut Model) -> WriteSetResult {
 
 /// Apply multiple WriteSets by merging them first
 ///
-/// This is a convenience function for applying results from multiple cores.
+/// This is a convenience function for applying results from multiple cores
+/// when you know there are no conflicts.
+///
+/// **Warning**: This does not perform conflict detection. For parallel execution
+/// with potential conflicts, use [`commit_batch`] instead.
 pub fn apply_batch(write_sets: Vec<WriteSet>, model: &mut Model) -> WriteSetResult {
     let merged = WriteSet::merge(write_sets);
     apply(&merged, model)
 }
 
+/// Commit a single WriteSet with version tracking
+///
+/// This is a simple commit for single-core execution or when you've already
+/// resolved conflicts externally.
+///
+/// # Arguments
+///
+/// * `write_set` - The WriteSet to commit
+/// * `model` - The Model to apply writes to
+/// * `version` - Current version, will be incremented on success
+///
+/// # Returns
+///
+/// A `CommitResult` with the new version and spawned/destroyed entities.
+pub fn commit(write_set: WriteSet, model: &mut Model, version: &mut u64) -> CommitResult {
+    // Skip version increment if no writes (no state change)
+    if write_set.is_empty() {
+        return CommitResult::new(*version);
+    }
+
+    let write_result = apply(&write_set, model);
+
+    *version += 1;
+
+    let mut result = CommitResult::new(*version);
+    result.merge_write_result(write_result);
+    result
+}
+
+/// Commit multiple WriteSets from parallel cores with conflict detection/resolution
+///
+/// This is the main entry point for committing parallel execution results.
+/// It detects conflicts between WriteSets, resolves them using the provided
+/// strategy, and applies the resolved writes atomically.
+///
+/// # Arguments
+///
+/// * `write_sets` - WriteSets from each core, paired with their CoreId
+/// * `model` - The Model to apply writes to
+/// * `version` - Current version, will be incremented on success
+/// * `strategy` - How to resolve conflicts between cores
+///
+/// # Returns
+///
+/// * `Ok(CommitResult)` - Commit succeeded with version and statistics
+/// * `Err(Error::UnresolvedConflicts)` - Conflicts couldn't be resolved (e.g., with `Abort` strategy)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let result = commit_batch(
+///     vec![
+///         (CoreId(0), core0_writes),
+///         (CoreId(1), core1_writes),
+///     ],
+///     &mut model,
+///     &mut version,
+///     &ResolutionStrategy::LastWriteWins,
+/// )?;
+/// ```
+pub fn commit_batch(
+    write_sets: Vec<(CoreId, WriteSet)>,
+    model: &mut Model,
+    version: &mut u64,
+    strategy: &ResolutionStrategy,
+) -> Result<CommitResult> {
+    // Fast path: single WriteSet has no conflicts
+    if write_sets.len() <= 1 {
+        let merged = WriteSet::merge(write_sets.into_iter().map(|(_, ws)| ws).collect());
+        return Ok(commit(merged, model, version));
+    }
+
+    // Detect and resolve conflicts
+    let resolution_result = resolve_conflicts(&write_sets, strategy)?;
+
+    // Skip version increment if no writes (no state change)
+    if resolution_result.write_set.is_empty() {
+        return Ok(CommitResult::new(*version));
+    }
+
+    // Apply the resolved writes
+    let write_result = apply(&resolution_result.write_set, model);
+
+    *version += 1;
+
+    let mut result = CommitResult::new(*version);
+    result.merge_write_result(write_result);
+    result.conflicts_resolved = resolution_result.conflicts_resolved;
+
+    Ok(result)
+}
+
+/// Check for conflicts without committing
+///
+/// Useful for dry-run validation or reporting before commit.
+///
+/// # Returns
+///
+/// `true` if there are conflicts, `false` if safe to merge.
+pub fn has_conflicts(write_sets: &[(CoreId, WriteSet)]) -> bool {
+    detect_conflicts(write_sets).has_conflicts()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
     use pulsive_core::{DefId, ModifyOp, ValueMap};
 
     #[test]
@@ -156,7 +327,7 @@ mod tests {
     #[test]
     fn test_apply_entity_property() {
         let mut model = Model::new();
-        let entity = model.entities.create("nation");
+        let entity = model.entities_mut().create("nation");
         entity.set("gold", 100.0f64);
         let entity_id = entity.id;
 
@@ -171,7 +342,7 @@ mod tests {
 
         assert_eq!(
             model
-                .entities
+                .entities()
                 .get(entity_id)
                 .and_then(|e| e.get_number("gold")),
             Some(200.0)
@@ -181,7 +352,7 @@ mod tests {
     #[test]
     fn test_apply_modify_entity_property() {
         let mut model = Model::new();
-        let entity = model.entities.create("nation");
+        let entity = model.entities_mut().create("nation");
         entity.set("gold", 100.0f64);
         let entity_id = entity.id;
 
@@ -197,7 +368,7 @@ mod tests {
 
         assert_eq!(
             model
-                .entities
+                .entities()
                 .get(entity_id)
                 .and_then(|e| e.get_number("gold")),
             Some(200.0)
@@ -222,7 +393,7 @@ mod tests {
 
         assert_eq!(result.spawned.len(), 1);
         let entity_id = result.spawned[0];
-        let entity = model.entities.get(entity_id).unwrap();
+        let entity = model.entities().get(entity_id).unwrap();
         assert_eq!(entity.get("name").and_then(|v| v.as_str()), Some("France"));
         assert_eq!(entity.get_number("gold"), Some(100.0));
     }
@@ -230,10 +401,10 @@ mod tests {
     #[test]
     fn test_apply_destroy_entity() {
         let mut model = Model::new();
-        let entity = model.entities.create("nation");
+        let entity = model.entities_mut().create("nation");
         let entity_id = entity.id;
 
-        assert!(model.entities.get(entity_id).is_some());
+        assert!(model.entities().get(entity_id).is_some());
 
         let mut write_set = WriteSet::new();
         write_set.push(PendingWrite::DestroyEntity { id: entity_id });
@@ -241,13 +412,13 @@ mod tests {
         let result = apply(&write_set, &mut model);
 
         assert_eq!(result.destroyed.len(), 1);
-        assert!(model.entities.get(entity_id).is_none());
+        assert!(model.entities().get(entity_id).is_none());
     }
 
     #[test]
     fn test_apply_flags() {
         let mut model = Model::new();
-        let entity = model.entities.create("nation");
+        let entity = model.entities_mut().create("nation");
         let entity_id = entity.id;
 
         let mut write_set = WriteSet::new();
@@ -258,7 +429,7 @@ mod tests {
 
         apply(&write_set, &mut model);
 
-        let entity = model.entities.get(entity_id).unwrap();
+        let entity = model.entities().get(entity_id).unwrap();
         assert!(entity.has_flag(&DefId::new("at_war")));
 
         // Remove the flag
@@ -270,7 +441,7 @@ mod tests {
 
         apply(&write_set, &mut model);
 
-        let entity = model.entities.get(entity_id).unwrap();
+        let entity = model.entities().get(entity_id).unwrap();
         assert!(!entity.has_flag(&DefId::new("at_war")));
     }
 
@@ -331,6 +502,233 @@ mod tests {
     }
 
     // ========================================================================
+    // Commit tests
+    // ========================================================================
+
+    #[test]
+    fn test_commit_single() {
+        let mut model = Model::new();
+        let mut version = 0u64;
+
+        let mut write_set = WriteSet::new();
+        write_set.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let result = commit(write_set, &mut model, &mut version);
+
+        assert_eq!(result.version, 1);
+        assert_eq!(version, 1);
+        assert_eq!(
+            model.get_global("gold").and_then(|v| v.as_float()),
+            Some(100.0)
+        );
+    }
+
+    #[test]
+    fn test_commit_batch_no_conflicts() {
+        let mut model = Model::new();
+        let mut version = 0u64;
+
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "silver".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let result = commit_batch(
+            vec![(CoreId(0), ws0), (CoreId(1), ws1)],
+            &mut model,
+            &mut version,
+            &ResolutionStrategy::Abort,
+        )
+        .unwrap();
+
+        assert_eq!(result.version, 1);
+        assert_eq!(result.conflicts_resolved, 0);
+        assert_eq!(
+            model.get_global("gold").and_then(|v| v.as_float()),
+            Some(100.0)
+        );
+        assert_eq!(
+            model.get_global("silver").and_then(|v| v.as_float()),
+            Some(200.0)
+        );
+    }
+
+    #[test]
+    fn test_commit_batch_with_conflicts_abort() {
+        let mut model = Model::new();
+        let mut version = 0u64;
+
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let result = commit_batch(
+            vec![(CoreId(0), ws0), (CoreId(1), ws1)],
+            &mut model,
+            &mut version,
+            &ResolutionStrategy::Abort,
+        );
+
+        assert!(result.is_err());
+        assert!(matches!(result, Err(Error::UnresolvedConflicts { .. })));
+        // Version should not have changed
+        assert_eq!(version, 0);
+    }
+
+    #[test]
+    fn test_commit_batch_with_conflicts_last_write_wins() {
+        let mut model = Model::new();
+        let mut version = 0u64;
+
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let result = commit_batch(
+            vec![(CoreId(0), ws0), (CoreId(1), ws1)],
+            &mut model,
+            &mut version,
+            &ResolutionStrategy::LastWriteWins,
+        )
+        .unwrap();
+
+        assert_eq!(result.version, 1);
+        assert_eq!(result.conflicts_resolved, 1);
+        // Core 1's value wins (higher CoreId)
+        assert_eq!(
+            model.get_global("gold").and_then(|v| v.as_float()),
+            Some(200.0)
+        );
+    }
+
+    #[test]
+    fn test_commit_batch_with_conflicts_first_write_wins() {
+        let mut model = Model::new();
+        let mut version = 0u64;
+
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let result = commit_batch(
+            vec![(CoreId(0), ws0), (CoreId(1), ws1)],
+            &mut model,
+            &mut version,
+            &ResolutionStrategy::FirstWriteWins,
+        )
+        .unwrap();
+
+        assert_eq!(result.version, 1);
+        assert_eq!(result.conflicts_resolved, 1);
+        // Core 0's value wins (lower CoreId)
+        assert_eq!(
+            model.get_global("gold").and_then(|v| v.as_float()),
+            Some(100.0)
+        );
+    }
+
+    #[test]
+    fn test_commit_batch_single_writeset() {
+        // Single WriteSet should take fast path (no conflict detection)
+        let mut model = Model::new();
+        let mut version = 0u64;
+
+        let mut ws = WriteSet::new();
+        ws.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let result = commit_batch(
+            vec![(CoreId(0), ws)],
+            &mut model,
+            &mut version,
+            &ResolutionStrategy::Abort,
+        )
+        .unwrap();
+
+        assert_eq!(result.version, 1);
+        assert_eq!(result.conflicts_resolved, 0);
+    }
+
+    #[test]
+    fn test_commit_batch_empty_no_version_increment() {
+        // Empty commits should NOT increment version (no state change)
+        let mut model = Model::new();
+        let mut version = 5u64;
+
+        let result =
+            commit_batch(vec![], &mut model, &mut version, &ResolutionStrategy::Abort).unwrap();
+
+        // Version should remain unchanged
+        assert_eq!(result.version, 5);
+        assert_eq!(version, 5);
+        assert_eq!(result.spawned.len(), 0);
+        assert_eq!(result.destroyed.len(), 0);
+    }
+
+    #[test]
+    fn test_has_conflicts() {
+        let mut ws0 = WriteSet::new();
+        ws0.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(100.0),
+        });
+
+        let mut ws1 = WriteSet::new();
+        ws1.push(PendingWrite::SetGlobal {
+            key: "gold".to_string(),
+            value: Value::Float(200.0),
+        });
+
+        let mut ws2 = WriteSet::new();
+        ws2.push(PendingWrite::SetGlobal {
+            key: "silver".to_string(),
+            value: Value::Float(300.0),
+        });
+
+        // Conflicting
+        assert!(has_conflicts(&[(CoreId(0), ws0.clone()), (CoreId(1), ws1)]));
+
+        // Non-conflicting
+        assert!(!has_conflicts(&[(CoreId(0), ws0), (CoreId(2), ws2)]));
+    }
+
+    // ========================================================================
     // Integration tests: collect_effect → apply pattern
     // ========================================================================
 
@@ -386,7 +784,7 @@ mod tests {
     #[test]
     fn test_collect_then_apply_entity() {
         let mut model = Model::new();
-        let entity = model.entities.create("nation");
+        let entity = model.entities_mut().create("nation");
         entity.set("population", 1000.0f64);
         let entity_id = entity.id;
 
@@ -410,7 +808,7 @@ mod tests {
         // Verify not mutated
         assert_eq!(
             model
-                .entities
+                .entities()
                 .get(entity_id)
                 .and_then(|e| e.get_number("population")),
             Some(1000.0)
@@ -421,7 +819,7 @@ mod tests {
 
         assert_eq!(
             model
-                .entities
+                .entities()
                 .get(entity_id)
                 .and_then(|e| e.get_number("population")),
             Some(2000.0)
@@ -506,14 +904,14 @@ mod tests {
         );
 
         // No entities yet
-        assert_eq!(model.entities.by_kind(&DefId::new("city")).count(), 0);
+        assert_eq!(model.entities().by_kind(&DefId::new("city")).count(), 0);
 
         // Apply
         let result = apply(&write_set, &mut model);
 
         // Entity created
         assert_eq!(result.spawned.len(), 1);
-        let city = model.entities.get(result.spawned[0]).unwrap();
+        let city = model.entities().get(result.spawned[0]).unwrap();
         assert_eq!(city.get("name").and_then(|v| v.as_str()), Some("Paris"));
         assert_eq!(city.get_number("population"), Some(2_000_000.0));
     }

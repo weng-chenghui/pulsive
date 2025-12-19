@@ -111,18 +111,18 @@ pub mod compare {
         }
 
         // Compare globals
-        if !maps_equal(&a.globals, &b.globals) {
+        if !maps_equal(a.globals(), b.globals()) {
             return false;
         }
 
         // Compare entity count
-        if a.entities.len() != b.entities.len() {
+        if a.entities().len() != b.entities().len() {
             return false;
         }
 
         // Compare each entity
-        for entity_a in a.entities.iter() {
-            match b.entities.get(entity_a.id) {
+        for entity_a in a.entities().iter() {
+            match b.entities().get(entity_a.id) {
                 Some(entity_b) => {
                     if entity_a.kind != entity_b.kind {
                         return false;
@@ -180,7 +180,7 @@ pub mod compare {
         model.current_tick().hash(&mut hasher);
 
         // Hash globals (sorted for consistency)
-        let mut globals: Vec<_> = model.globals.iter().collect();
+        let mut globals: Vec<_> = model.globals().iter().collect();
         globals.sort_by_key(|(k, _)| *k);
         for (key, value) in globals {
             key.hash(&mut hasher);
@@ -189,7 +189,7 @@ pub mod compare {
         }
 
         // Hash entity count
-        model.entities.len().hash(&mut hasher);
+        model.entities().len().hash(&mut hasher);
 
         hasher.finish()
     }

@@ -133,13 +133,13 @@ impl Store {
         let rw = self.db.rw_transaction()?;
 
         // Save all entities
-        for entity in model.entities.iter() {
+        for entity in model.entities().iter() {
             let stored = StoredEntity::from_entity(entity);
             rw.upsert(stored)?;
         }
 
         // Save globals
-        let globals = StoredGlobals::from_globals(&model.globals);
+        let globals = StoredGlobals::from_globals(model.globals());
         rw.upsert(globals)?;
 
         // Save time
@@ -162,13 +162,14 @@ impl Store {
         for entity in self.load_all_entities()? {
             // Insert entity into the store
             let kind = entity.kind.clone();
-            let new_entity = model.entities.create(kind);
+            let new_entity = model.entities_mut().create(kind);
             new_entity.properties = entity.properties;
             new_entity.flags = entity.flags;
         }
 
         // Load globals
-        model.globals = self.load_globals()?;
+        let loaded_globals = self.load_globals()?;
+        *model.globals_mut() = loaded_globals;
 
         // Load time
         if let Some(time) = self.load_clock()? {
