@@ -30,6 +30,7 @@
 //! 3. **Core is just a wrapper** - bundles Runtime+Model, delegates all logic to pulsive-core
 
 pub mod commit;
+mod config;
 pub mod conflict;
 mod core;
 mod error;
@@ -39,6 +40,7 @@ mod snapshot;
 mod tick_sync;
 
 pub use commit::{apply, apply_batch, commit, commit_batch, has_conflicts, CommitResult};
+pub use config::{max_cores, HubConfig};
 pub use conflict::{
     default_conflict_filter, detect_conflicts, detect_conflicts_filtered, resolve_conflicts,
     Conflict, ConflictReport, ConflictResolver, ConflictTarget, ConflictType, ResolutionResult,
