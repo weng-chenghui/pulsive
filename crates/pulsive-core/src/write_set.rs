@@ -206,6 +206,42 @@ impl WriteSet {
     }
 }
 
+// ============================================================================
+// Iterator implementations for ergonomic merging
+// ============================================================================
+
+impl IntoIterator for WriteSet {
+    type Item = PendingWrite;
+    type IntoIter = std::vec::IntoIter<PendingWrite>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.writes.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a WriteSet {
+    type Item = &'a PendingWrite;
+    type IntoIter = std::slice::Iter<'a, PendingWrite>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.writes.iter()
+    }
+}
+
+impl FromIterator<PendingWrite> for WriteSet {
+    fn from_iter<T: IntoIterator<Item = PendingWrite>>(iter: T) -> Self {
+        WriteSet {
+            writes: iter.into_iter().collect(),
+        }
+    }
+}
+
+impl Extend<PendingWrite> for WriteSet {
+    fn extend<T: IntoIterator<Item = PendingWrite>>(&mut self, iter: T) {
+        self.writes.extend(iter);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,5 +374,85 @@ mod tests {
         result1.merge(result2);
         assert_eq!(result1.spawned.len(), 2);
         assert_eq!(result1.destroyed.len(), 1);
+    }
+
+    #[test]
+    fn test_write_set_into_iterator() {
+        let mut ws = WriteSet::new();
+        ws.push(PendingWrite::SetGlobal {
+            key: "a".to_string(),
+            value: Value::Float(1.0),
+        });
+        ws.push(PendingWrite::SetGlobal {
+            key: "b".to_string(),
+            value: Value::Float(2.0),
+        });
+
+        // Test consuming into_iter
+        let keys: Vec<String> = ws
+            .into_iter()
+            .filter_map(|w| match w {
+                PendingWrite::SetGlobal { key, .. } => Some(key),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(keys, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[test]
+    fn test_write_set_ref_iterator() {
+        let mut ws = WriteSet::new();
+        ws.push(PendingWrite::SetGlobal {
+            key: "a".to_string(),
+            value: Value::Float(1.0),
+        });
+
+        // Test reference iterator (WriteSet not consumed)
+        let count = (&ws).into_iter().count();
+        assert_eq!(count, 1);
+        // ws is still usable
+        assert_eq!(ws.len(), 1);
+    }
+
+    #[test]
+    fn test_write_set_from_iterator() {
+        let writes = vec![
+            PendingWrite::SetGlobal {
+                key: "a".to_string(),
+                value: Value::Float(1.0),
+            },
+            PendingWrite::SetGlobal {
+                key: "b".to_string(),
+                value: Value::Float(2.0),
+            },
+        ];
+
+        // Test FromIterator
+        let ws: WriteSet = writes.into_iter().collect();
+        assert_eq!(ws.len(), 2);
+    }
+
+    #[test]
+    fn test_write_set_extend_trait() {
+        let mut ws = WriteSet::new();
+        ws.push(PendingWrite::SetGlobal {
+            key: "a".to_string(),
+            value: Value::Float(1.0),
+        });
+
+        let more_writes = vec![
+            PendingWrite::SetGlobal {
+                key: "b".to_string(),
+                value: Value::Float(2.0),
+            },
+            PendingWrite::SetGlobal {
+                key: "c".to_string(),
+                value: Value::Float(3.0),
+            },
+        ];
+
+        // Test Extend trait (using Extend::extend to disambiguate)
+        Extend::extend(&mut ws, more_writes);
+        assert_eq!(ws.len(), 3);
     }
 }

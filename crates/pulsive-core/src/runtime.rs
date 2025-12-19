@@ -650,6 +650,23 @@ impl Runtime {
     /// # Returns
     ///
     /// A WriteSet containing all pending writes from this effect
+    ///
+    /// # Error Handling (On Eval Error)
+    ///
+    /// When expression evaluation fails, errors are logged as warnings to
+    /// `EffectResult.logs` with context about which effect/field failed. The
+    /// specific behavior for each effect type:
+    ///
+    /// - **Leaf effects** (SetProperty, SetGlobal, etc.): The write is skipped,
+    ///   a warning is logged, and processing continues.
+    /// - **If**: On condition eval error, defaults to the `else` branch.
+    /// - **ForEachEntity**: On filter eval error, the entity is skipped.
+    /// - **RandomChoice**: On weight eval error, the choice weight defaults to 0.0.
+    /// - **Log/Notify**: On message eval error, an empty string is used.
+    /// - **ScheduleEvent**: On delay eval error, the event is not scheduled.
+    ///
+    /// This design ensures partial progress: a single failed expression doesn't
+    /// abort the entire effect tree, while errors remain observable via logs.
     #[allow(clippy::only_used_in_recursion)]
     pub fn collect_effect(
         &mut self,
@@ -1044,6 +1061,163 @@ mod tests {
                 .get(entity_id)
                 .and_then(|e| e.get_number("gold")),
             Some(150.0)
+        );
+    }
+
+    #[test]
+    fn test_collect_effect_logs_eval_error_set_property() {
+        use crate::effect::{EffectResult, LogLevel};
+
+        let mut model = Model::new();
+        let mut runtime = Runtime::new();
+
+        // Create an entity
+        let entity = model.entities.create("test");
+        let entity_id = entity.id;
+
+        // Create effect with division by zero expression
+        let effect = Effect::SetProperty {
+            property: "value".to_string(),
+            value: Expr::Div(Box::new(Expr::lit(1.0)), Box::new(Expr::lit(0.0))), // Division by zero
+        };
+
+        let mut result = EffectResult::default();
+        let writes = runtime.collect_effect(
+            &mut model,
+            &effect,
+            &EntityRef::Entity(entity_id),
+            &ValueMap::new(),
+            &mut result,
+        );
+
+        // Should have logged a warning
+        assert!(
+            !result.logs.is_empty(),
+            "Expected a warning log for eval error"
+        );
+        let (level, msg) = &result.logs[0];
+        assert!(matches!(level, LogLevel::Warn));
+        assert!(
+            msg.contains("SetProperty"),
+            "Log should mention the effect type"
+        );
+        assert!(
+            msg.contains("eval error"),
+            "Log should mention it's an eval error"
+        );
+
+        // Write should be skipped
+        assert!(writes.is_empty(), "Write should be skipped on eval error");
+    }
+
+    #[test]
+    fn test_collect_effect_logs_eval_error_if_condition() {
+        use crate::effect::{EffectResult, LogLevel};
+
+        let mut model = Model::new();
+        let mut runtime = Runtime::new();
+
+        // Create effect with If condition that will fail (division by zero)
+        let effect = Effect::If {
+            condition: Expr::Div(Box::new(Expr::lit(1.0)), Box::new(Expr::lit(0.0))), // Division by zero
+            then_effects: vec![Effect::SetGlobal {
+                property: "then_ran".to_string(),
+                value: Expr::lit(1.0),
+            }],
+            else_effects: vec![Effect::SetGlobal {
+                property: "else_ran".to_string(),
+                value: Expr::lit(1.0),
+            }],
+        };
+
+        let mut result = EffectResult::default();
+        let writes = runtime.collect_effect(
+            &mut model,
+            &effect,
+            &EntityRef::Global,
+            &ValueMap::new(),
+            &mut result,
+        );
+
+        // Should have logged a warning for the condition eval error
+        assert!(
+            !result.logs.is_empty(),
+            "Expected a warning log for condition eval error"
+        );
+        let (level, msg) = &result.logs[0];
+        assert!(matches!(level, LogLevel::Warn));
+        assert!(
+            msg.contains("If.condition"),
+            "Log should mention If.condition"
+        );
+
+        // Should default to else branch on error
+        assert_eq!(writes.len(), 1);
+        let write = writes.iter().next().expect("Expected one write");
+        match write {
+            crate::write_set::PendingWrite::SetGlobal { key, .. } => {
+                assert_eq!(
+                    key, "else_ran",
+                    "Should execute else branch on condition error"
+                );
+            }
+            _ => panic!("Expected SetGlobal write"),
+        }
+    }
+
+    #[test]
+    fn test_collect_effect_logs_eval_error_for_each_filter() {
+        use crate::effect::{EffectResult, LogLevel};
+
+        let mut model = Model::new();
+        let mut runtime = Runtime::new();
+
+        // Create some entities
+        let e1 = model.entities.create("unit");
+        e1.set("health", 100.0f64);
+        let e2 = model.entities.create("unit");
+        e2.set("health", 50.0f64);
+
+        // Create ForEach with filter that will fail (division by zero)
+        let effect = Effect::ForEachEntity {
+            kind: DefId::new("unit"),
+            filter: Some(Expr::Div(
+                Box::new(Expr::lit(1.0)),
+                Box::new(Expr::lit(0.0)),
+            )), // Division by zero
+            effects: vec![Effect::ModifyProperty {
+                property: "health".to_string(),
+                op: ModifyOp::Add,
+                value: Expr::lit(10.0),
+            }],
+        };
+
+        let mut result = EffectResult::default();
+        let writes = runtime.collect_effect(
+            &mut model,
+            &effect,
+            &EntityRef::Global,
+            &ValueMap::new(),
+            &mut result,
+        );
+
+        // Should have logged warnings for each entity's filter eval error
+        assert!(
+            result.logs.len() >= 2,
+            "Expected warning logs for filter eval errors on both entities"
+        );
+        for (level, msg) in &result.logs {
+            assert!(matches!(level, LogLevel::Warn));
+            assert!(
+                msg.contains("ForEachEntity.filter"),
+                "Log should mention ForEachEntity.filter"
+            );
+        }
+
+        // Entities with failed filters should be skipped
+        assert!(
+            writes.is_empty(),
+            "Entities should be skipped when filter fails"
         );
     }
 }
