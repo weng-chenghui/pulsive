@@ -129,8 +129,9 @@ pub fn hash_bytes_with_seed(bytes: &[u8], seed: u64) -> u64 {
 ///
 /// # Note on Maps
 ///
-/// Map hashing is order-dependent (uses insertion order from IndexMap).
-/// If order-independent hashing is needed, sort keys before hashing.
+/// **Map hashing uses sorted keys** to ensure the hash is independent of
+/// insertion order. This means maps with the same key-value pairs will
+/// produce the same hash regardless of how they were built.
 ///
 /// # Example
 ///
@@ -192,9 +193,12 @@ pub fn hash_value_with_seed(value: &Value, seed: u64) -> u64 {
             h
         }
         Value::Map(map) => {
-            // Note: Map ordering affects hash (uses IndexMap insertion order)
+            // Sort keys to ensure hash is order-independent
             let mut h = hash_seed(seed, TYPE_MAP, 0);
-            for (i, (k, v)) in map.iter().enumerate() {
+            let mut keys: Vec<_> = map.keys().collect();
+            keys.sort();
+            for (i, k) in keys.into_iter().enumerate() {
+                let v = map.get(k).unwrap();
                 let key_hash = hash_bytes_with_seed(k.as_bytes(), h);
                 let val_hash = hash_value_with_seed(v, h);
                 h = hash_seed(h, key_hash, i as u64 * 2 + 1);
@@ -349,5 +353,29 @@ mod tests {
         let h1 = hash_value_with_seed(&nested, DEFAULT_GLOBAL_SEED);
         let h2 = hash_value_with_seed(&nested, DEFAULT_GLOBAL_SEED);
         assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_hash_value_map_order_independent() {
+        use pulsive_core::IndexMap;
+
+        // Build two maps with the same key-value pairs but different insertion order
+        let mut map1 = IndexMap::new();
+        map1.insert("a".to_string(), Value::Int(1));
+        map1.insert("b".to_string(), Value::Int(2));
+        map1.insert("c".to_string(), Value::Int(3));
+
+        let mut map2 = IndexMap::new();
+        map2.insert("c".to_string(), Value::Int(3));
+        map2.insert("a".to_string(), Value::Int(1));
+        map2.insert("b".to_string(), Value::Int(2));
+
+        // They should have the same hash because we sort keys before hashing
+        let h1 = hash_value_with_seed(&Value::Map(map1), DEFAULT_GLOBAL_SEED);
+        let h2 = hash_value_with_seed(&Value::Map(map2), DEFAULT_GLOBAL_SEED);
+        assert_eq!(
+            h1, h2,
+            "Maps with same key-value pairs should hash identically regardless of insertion order"
+        );
     }
 }

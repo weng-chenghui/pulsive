@@ -6,23 +6,42 @@
 //!
 //! # Strategies
 //!
-//! - [`PartitionKind::ById`]: Round-robin partitioning by entity ID
-//! - [`PartitionKind::ByOwner`]: Partition by an owner property value
-//! - [`PartitionKind::SpatialGrid`]: 2D spatial grid partitioning
+//! - [`PartitionKind::ById`]: Round-robin partitioning by entity ID (seed-independent)
+//! - [`PartitionKind::ByOwner`]: Partition by an owner property value (uses seed)
+//! - [`PartitionKind::SpatialGrid`]: 2D spatial grid partitioning (uses seed)
 //! - [`PartitionKind::Custom`]: User-defined partitioning function
 //!
 //! # Seed Configuration
 //!
-//! Partition strategies use the hub's deterministic hashing infrastructure.
-//! By default, [`DEFAULT_GLOBAL_SEED`] is used,
-//! but you can provide a custom seed via [`PartitionStrategy::with_seed`] or
-//! use the hub's [`HubConfig::global_seed()`](crate::HubConfig::global_seed).
+//! Most partition strategies use the hub's deterministic hashing infrastructure.
+//! Use [`PartitionStrategy::from_config`] to create strategies that automatically
+//! use the hub's configured seed:
+//!
+//! ```
+//! use pulsive_hub::partition::{PartitionStrategy, PartitionKind};
+//! use pulsive_hub::HubConfig;
+//!
+//! let config = HubConfig::with_seed(42);
+//!
+//! // Create strategy using hub's seed
+//! let strategy = PartitionStrategy::from_config(PartitionKind::ByOwner {
+//!     property: "owner_id".to_string(),
+//! }, &config);
+//! assert_eq!(strategy.seed(), 42);
+//!
+//! // Convenience method
+//! let strategy = PartitionStrategy::by_owner_from_config("owner_id", &config);
+//! assert_eq!(strategy.seed(), 42);
+//! ```
+//!
+//! **Note:** [`PartitionKind::ById`] uses pure round-robin and does not use the seed.
+//! Changing the seed will not affect `ById` partition layouts.
 //!
 //! # Example
 //!
 //! ```
 //! use pulsive_hub::partition::{PartitionStrategy, PartitionKind, PartitionResult};
-//! use pulsive_hub::DEFAULT_GLOBAL_SEED;
+//! use pulsive_hub::{HubConfig, DEFAULT_GLOBAL_SEED};
 //! use pulsive_core::{Entity, EntityStore, EntityId};
 //!
 //! // Create an entity store with some entities
@@ -31,20 +50,20 @@
 //!     store.create("unit");
 //! }
 //!
-//! // Partition by ID (round-robin) with default seed
+//! // Using default seed (quick setup)
 //! let strategy = PartitionStrategy::by_id();
 //! let result = strategy.partition(&store, 4);
-//!
 //! assert_eq!(result.partition_count(), 4);
-//! assert_eq!(result.total_entities(), 10);
 //!
-//! // With custom seed for different partition layout
-//! let strategy = PartitionStrategy::with_seed(PartitionKind::ById, 42);
+//! // Using hub config's seed (recommended for production)
+//! let config = HubConfig::with_seed(12345);
+//! let strategy = PartitionStrategy::by_owner_from_config("nation_id", &config);
 //! ```
 
 use crate::config::hash_seed;
 use crate::hash::{hash_u64_with_seed, hash_value_with_seed};
 use crate::CoreId;
+use crate::HubConfig;
 use crate::DEFAULT_GLOBAL_SEED;
 use pulsive_core::{Entity, EntityId, EntityStore};
 use std::sync::Arc;
@@ -59,6 +78,11 @@ pub enum PartitionKind {
     ///
     /// Entities are distributed evenly across cores based on their ID:
     /// `core_id = entity_id % core_count`
+    ///
+    /// **Note:** This strategy does not use the seed. Partition assignments
+    /// are purely determined by entity IDs and core count, making them
+    /// stable regardless of seed configuration. Use this when you want
+    /// consistent, predictable distribution without seed-based variation.
     ///
     /// # Example Distribution (4 cores)
     ///
@@ -197,14 +221,19 @@ impl PartitionStrategy {
 
     /// Create a round-robin by-ID partitioning strategy
     ///
-    /// Uses the default global seed.
+    /// Uses [`DEFAULT_GLOBAL_SEED`]. For production code, consider using
+    /// [`by_id_from_config`](Self::by_id_from_config) to respect the hub's seed.
+    ///
+    /// **Note:** The `ById` strategy does not use the seed for partitioning.
+    /// See [`PartitionKind::ById`] for details.
     pub fn by_id() -> Self {
         Self::with_seed(PartitionKind::ById, DEFAULT_GLOBAL_SEED)
     }
 
     /// Create an owner-based partitioning strategy
     ///
-    /// Uses the default global seed.
+    /// Uses [`DEFAULT_GLOBAL_SEED`]. For production code, consider using
+    /// [`by_owner_from_config`](Self::by_owner_from_config) to respect the hub's seed.
     ///
     /// # Arguments
     ///
@@ -220,7 +249,8 @@ impl PartitionStrategy {
 
     /// Create a spatial grid partitioning strategy
     ///
-    /// Uses the default global seed.
+    /// Uses [`DEFAULT_GLOBAL_SEED`]. For production code, consider using
+    /// [`spatial_grid_from_config`](Self::spatial_grid_from_config) to respect the hub's seed.
     ///
     /// # Arguments
     ///
@@ -249,7 +279,8 @@ impl PartitionStrategy {
 
     /// Create a custom partitioning strategy
     ///
-    /// Uses the default global seed.
+    /// Uses [`DEFAULT_GLOBAL_SEED`]. For production code, consider using
+    /// [`custom_from_config`](Self::custom_from_config) to respect the hub's seed.
     ///
     /// # Arguments
     ///
@@ -260,6 +291,137 @@ impl PartitionStrategy {
     {
         Self::with_seed(PartitionKind::Custom(Arc::new(f)), DEFAULT_GLOBAL_SEED)
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Config-based constructors
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Create a partition strategy using the hub config's global seed
+    ///
+    /// This is the recommended way to create strategies in production code,
+    /// as it ensures the partition layout uses the same seed as the rest of
+    /// the hub's deterministic infrastructure.
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - The partitioning algorithm to use
+    /// * `config` - Hub configuration to get the seed from
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::partition::{PartitionStrategy, PartitionKind};
+    /// use pulsive_hub::HubConfig;
+    ///
+    /// let config = HubConfig::with_seed(42);
+    /// let strategy = PartitionStrategy::from_config(PartitionKind::ById, &config);
+    /// assert_eq!(strategy.seed(), 42);
+    /// ```
+    pub fn from_config(kind: PartitionKind, config: &HubConfig) -> Self {
+        Self::with_seed(kind, config.global_seed())
+    }
+
+    /// Create a round-robin by-ID strategy using the hub config's seed
+    ///
+    /// **Note:** The `ById` strategy does not use the seed for partitioning;
+    /// entity assignments are purely based on `entity_id % core_count`.
+    /// The seed is stored for consistency but does not affect the layout.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::partition::PartitionStrategy;
+    /// use pulsive_hub::HubConfig;
+    ///
+    /// let config = HubConfig::with_seed(42);
+    /// let strategy = PartitionStrategy::by_id_from_config(&config);
+    /// ```
+    pub fn by_id_from_config(config: &HubConfig) -> Self {
+        Self::from_config(PartitionKind::ById, config)
+    }
+
+    /// Create an owner-based strategy using the hub config's seed
+    ///
+    /// # Arguments
+    ///
+    /// * `property` - The property name containing the owner identifier
+    /// * `config` - Hub configuration to get the seed from
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::partition::PartitionStrategy;
+    /// use pulsive_hub::HubConfig;
+    ///
+    /// let config = HubConfig::with_seed(42);
+    /// let strategy = PartitionStrategy::by_owner_from_config("nation_id", &config);
+    /// assert_eq!(strategy.seed(), 42);
+    /// ```
+    pub fn by_owner_from_config(property: impl Into<String>, config: &HubConfig) -> Self {
+        Self::from_config(
+            PartitionKind::ByOwner {
+                property: property.into(),
+            },
+            config,
+        )
+    }
+
+    /// Create a spatial grid strategy using the hub config's seed
+    ///
+    /// # Arguments
+    ///
+    /// * `cell_size` - Size of each grid cell (must be > 0)
+    /// * `x_prop` - Property name for the X coordinate
+    /// * `y_prop` - Property name for the Y coordinate
+    /// * `config` - Hub configuration to get the seed from
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cell_size` is <= 0
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::partition::PartitionStrategy;
+    /// use pulsive_hub::HubConfig;
+    ///
+    /// let config = HubConfig::with_seed(42);
+    /// let strategy = PartitionStrategy::spatial_grid_from_config(100.0, "x", "y", &config);
+    /// assert_eq!(strategy.seed(), 42);
+    /// ```
+    pub fn spatial_grid_from_config(
+        cell_size: f64,
+        x_prop: impl Into<String>,
+        y_prop: impl Into<String>,
+        config: &HubConfig,
+    ) -> Self {
+        assert!(cell_size > 0.0, "cell_size must be positive");
+        Self::from_config(
+            PartitionKind::SpatialGrid {
+                cell_size,
+                x_prop: x_prop.into(),
+                y_prop: y_prop.into(),
+            },
+            config,
+        )
+    }
+
+    /// Create a custom partitioning strategy using the hub config's seed
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - Function that maps an entity to a core index
+    /// * `config` - Hub configuration to get the seed from
+    pub fn custom_from_config<F>(f: F, config: &HubConfig) -> Self
+    where
+        F: Fn(&Entity) -> usize + Send + Sync + 'static,
+    {
+        Self::from_config(PartitionKind::Custom(Arc::new(f)), config)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Accessors
+    // ─────────────────────────────────────────────────────────────────────────
 
     /// Get the seed used for deterministic hashing
     pub fn seed(&self) -> u64 {
@@ -926,6 +1088,84 @@ mod tests {
                 result1.get(CoreId(i)),
                 result2.get(CoreId(i)),
                 "Same seed should produce same partition layout"
+            );
+        }
+    }
+
+    // ========================================================================
+    // Config-based Constructor Tests
+    // ========================================================================
+
+    #[test]
+    fn test_from_config_uses_hub_seed() {
+        let config = HubConfig::with_seed(12345);
+
+        let strategy = PartitionStrategy::from_config(PartitionKind::ById, &config);
+        assert_eq!(strategy.seed(), 12345);
+
+        let strategy = PartitionStrategy::by_id_from_config(&config);
+        assert_eq!(strategy.seed(), 12345);
+
+        let strategy = PartitionStrategy::by_owner_from_config("owner", &config);
+        assert_eq!(strategy.seed(), 12345);
+
+        let strategy = PartitionStrategy::spatial_grid_from_config(100.0, "x", "y", &config);
+        assert_eq!(strategy.seed(), 12345);
+
+        let strategy = PartitionStrategy::custom_from_config(|e| e.id.raw() as usize, &config);
+        assert_eq!(strategy.seed(), 12345);
+    }
+
+    #[test]
+    fn test_from_config_matches_with_seed() {
+        let config = HubConfig::with_seed(42);
+
+        // Creating via from_config should be equivalent to with_seed
+        let via_config = PartitionStrategy::by_owner_from_config("owner_id", &config);
+        let via_with_seed = PartitionStrategy::with_seed(
+            PartitionKind::ByOwner {
+                property: "owner_id".to_string(),
+            },
+            42,
+        );
+
+        assert_eq!(via_config.seed(), via_with_seed.seed());
+
+        // They should produce identical partition results
+        let mut store = EntityStore::new();
+        for i in 0..20 {
+            let entity = store.create("unit");
+            entity.set("owner_id", format!("nation_{}", i % 5));
+        }
+
+        let result_config = via_config.partition(&store, 4);
+        let result_with_seed = via_with_seed.partition(&store, 4);
+
+        for i in 0..4 {
+            assert_eq!(
+                result_config.get(CoreId(i)),
+                result_with_seed.get(CoreId(i))
+            );
+        }
+    }
+
+    #[test]
+    fn test_by_id_ignores_seed() {
+        // ById should produce the same layout regardless of seed
+        let store = create_test_store(20);
+
+        let strategy1 = PartitionStrategy::with_seed(PartitionKind::ById, 1);
+        let strategy2 = PartitionStrategy::with_seed(PartitionKind::ById, 99999);
+
+        let result1 = strategy1.partition(&store, 4);
+        let result2 = strategy2.partition(&store, 4);
+
+        // Results should be identical because ById uses entity.id % core_count
+        for i in 0..4 {
+            assert_eq!(
+                result1.get(CoreId(i)),
+                result2.get(CoreId(i)),
+                "ById should ignore seed and produce identical partitions"
             );
         }
     }
