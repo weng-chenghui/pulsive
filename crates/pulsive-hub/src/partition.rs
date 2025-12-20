@@ -202,7 +202,13 @@ impl PartitionStrategy {
     /// # Returns
     ///
     /// The index of the core this entity should be assigned to (0..core_count)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `core_count` is 0.
     pub fn assign_core(&self, entity: &Entity, core_count: usize) -> usize {
+        assert!(core_count > 0, "core_count must be at least 1");
+
         match self {
             PartitionStrategy::ById => {
                 // Round-robin by entity ID
@@ -212,11 +218,12 @@ impl PartitionStrategy {
             PartitionStrategy::ByOwner { property } => {
                 // Hash the owner property value to get core assignment
                 if let Some(value) = entity.get(property) {
-                    let hash = hash_value(value);
+                    let hash = deterministic_hash_value(value);
                     hash as usize % core_count
                 } else {
-                    // Entities without the owner property go to core 0
-                    0
+                    // Fallback: hash entity ID for balanced distribution
+                    // instead of hot-spotting all to core 0
+                    deterministic_hash_u64(entity.id.raw()) as usize % core_count
                 }
             }
 
@@ -364,38 +371,106 @@ impl PartitionResult {
 }
 
 // ============================================================================
-// Helper Functions
+// Helper Functions - Deterministic Hashing
 // ============================================================================
 
-/// Hash a Value for partitioning purposes
-fn hash_value(value: &pulsive_core::Value) -> u64 {
-    use pulsive_core::Value;
-    use std::hash::{Hash, Hasher};
+// Fixed seed constant for deterministic hashing across runs.
+// This ensures partition assignments are reproducible.
+const HASH_SEED: u64 = 0x517cc1b727220a95;
 
-    // Use a simple but fast hasher
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+/// Deterministic hash for a u64 value
+///
+/// Uses a fixed-key mixing function to ensure reproducible results
+/// across runs and platforms.
+fn deterministic_hash_u64(value: u64) -> u64 {
+    let mut h = HASH_SEED;
+    h = h.wrapping_mul(0x517cc1b727220a95);
+    h ^= value;
+    h = h.wrapping_mul(0x517cc1b727220a95);
+    h ^= h >> 32;
+    h
+}
+
+/// Deterministic hash for a byte slice
+///
+/// FNV-1a inspired hash with a fixed seed for deterministic results.
+fn deterministic_hash_bytes(bytes: &[u8]) -> u64 {
+    let mut h = HASH_SEED;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3); // FNV prime
+    }
+    h
+}
+
+/// Hash a Value for partitioning purposes
+///
+/// Uses deterministic hashing with fixed seeds to ensure reproducible
+/// partition assignments across runs. Each value type includes a type
+/// discriminator to ensure different types produce different hashes.
+fn deterministic_hash_value(value: &pulsive_core::Value) -> u64 {
+    use pulsive_core::Value;
+
+    // Type discriminators to ensure different types hash differently
+    const TYPE_NULL: u64 = 0;
+    const TYPE_BOOL: u64 = 1;
+    const TYPE_INT: u64 = 2;
+    const TYPE_FLOAT: u64 = 3;
+    const TYPE_STRING: u64 = 4;
+    const TYPE_ENTITY_REF: u64 = 5;
+    const TYPE_LIST: u64 = 6;
+    const TYPE_MAP: u64 = 7;
 
     match value {
-        Value::Null => 0u8.hash(&mut hasher),
-        Value::Bool(b) => b.hash(&mut hasher),
-        Value::Int(i) => i.hash(&mut hasher),
-        Value::Float(f) => f.to_bits().hash(&mut hasher),
-        Value::String(s) => s.hash(&mut hasher),
-        Value::EntityRef(id) => id.raw().hash(&mut hasher),
+        Value::Null => {
+            let mut h = deterministic_hash_u64(TYPE_NULL);
+            h ^= deterministic_hash_u64(0);
+            h
+        }
+        Value::Bool(b) => {
+            let mut h = deterministic_hash_u64(TYPE_BOOL);
+            h ^= deterministic_hash_u64(if *b { 1 } else { 0 });
+            h
+        }
+        Value::Int(i) => {
+            let mut h = deterministic_hash_u64(TYPE_INT);
+            h ^= deterministic_hash_u64(*i as u64);
+            h
+        }
+        Value::Float(f) => {
+            let mut h = deterministic_hash_u64(TYPE_FLOAT);
+            h ^= deterministic_hash_u64(f.to_bits());
+            h
+        }
+        Value::String(s) => {
+            let mut h = deterministic_hash_u64(TYPE_STRING);
+            h ^= deterministic_hash_bytes(s.as_bytes());
+            h
+        }
+        Value::EntityRef(id) => {
+            let mut h = deterministic_hash_u64(TYPE_ENTITY_REF);
+            h ^= deterministic_hash_u64(id.raw());
+            h
+        }
         Value::List(list) => {
+            let mut h = deterministic_hash_u64(TYPE_LIST);
             for v in list {
-                hasher.write_u64(hash_value(v));
+                h = h.wrapping_mul(0x517cc1b727220a95);
+                h ^= deterministic_hash_value(v);
             }
+            h
         }
         Value::Map(map) => {
+            let mut h = deterministic_hash_u64(TYPE_MAP);
             for (k, v) in map {
-                k.hash(&mut hasher);
-                hasher.write_u64(hash_value(v));
+                h = h.wrapping_mul(0x517cc1b727220a95);
+                h ^= deterministic_hash_bytes(k.as_bytes());
+                h = h.wrapping_mul(0x517cc1b727220a95);
+                h ^= deterministic_hash_value(v);
             }
+            h
         }
     }
-
-    hasher.finish()
 }
 
 /// Spatial hash function for 2D grid coordinates
@@ -559,14 +634,51 @@ mod tests {
     }
 
     #[test]
-    fn test_by_owner_missing_property() {
-        let store = create_test_store(5);
+    fn test_by_owner_missing_property_fallback() {
+        let store = create_test_store(100);
 
         let strategy = PartitionStrategy::by_owner("owner_id");
         let result = strategy.partition(&store, 4);
 
-        // All entities without owner property should go to core 0
-        assert_eq!(result.get(CoreId(0)).len(), 5);
+        // Entities without owner property should be distributed by ID hash
+        // (not all to core 0, which would cause hot-spotting)
+        assert_eq!(result.total_entities(), 100);
+
+        // Check that distribution is reasonably balanced (not all in one core)
+        let sizes = result.partition_sizes();
+        let max_size = *sizes.iter().max().unwrap();
+        let min_size = *sizes.iter().min().unwrap();
+
+        // With 100 entities across 4 cores, expect roughly 25 each
+        // Allow some variance but ensure it's not all in one partition
+        assert!(
+            max_size < 50,
+            "Missing owner should not hot-spot: max_size={}, expected <50",
+            max_size
+        );
+        assert!(
+            min_size > 10,
+            "Missing owner should distribute: min_size={}, expected >10",
+            min_size
+        );
+    }
+
+    #[test]
+    fn test_by_owner_missing_property_is_deterministic() {
+        let store = create_test_store(20);
+
+        let strategy = PartitionStrategy::by_owner("owner_id");
+        let result1 = strategy.partition(&store, 4);
+        let result2 = strategy.partition(&store, 4);
+
+        // Even with missing owner, should be deterministic
+        for i in 0..4 {
+            assert_eq!(
+                result1.get(CoreId(i)),
+                result2.get(CoreId(i)),
+                "Missing owner fallback should be deterministic"
+            );
+        }
     }
 
     // ========================================================================
@@ -775,10 +887,22 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "core_count must be at least 1")]
-    fn test_zero_core_count_panics() {
+    fn test_zero_core_count_partition_panics() {
         let store = create_test_store(10);
         let strategy = PartitionStrategy::by_id();
         strategy.partition(&store, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "core_count must be at least 1")]
+    fn test_zero_core_count_assign_core_panics() {
+        let mut store = EntityStore::new();
+        store.create("unit");
+        let entity = store.get(EntityId::new(0)).unwrap();
+
+        let strategy = PartitionStrategy::by_id();
+        // This should panic because core_count is 0
+        strategy.assign_core(entity, 0);
     }
 
     // ========================================================================
@@ -820,23 +944,82 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_hash_value_deterministic() {
+    fn test_deterministic_hash_value_is_deterministic() {
         use pulsive_core::Value;
 
         let v1 = Value::String("test".into());
         let v2 = Value::String("test".into());
 
-        assert_eq!(hash_value(&v1), hash_value(&v2));
+        assert_eq!(deterministic_hash_value(&v1), deterministic_hash_value(&v2));
     }
 
     #[test]
-    fn test_hash_value_different_for_different_values() {
+    fn test_deterministic_hash_value_different_for_different_values() {
         use pulsive_core::Value;
 
         let v1 = Value::String("france".into());
         let v2 = Value::String("england".into());
 
-        assert_ne!(hash_value(&v1), hash_value(&v2));
+        assert_ne!(deterministic_hash_value(&v1), deterministic_hash_value(&v2));
+    }
+
+    #[test]
+    fn test_deterministic_hash_u64_is_deterministic() {
+        // Same input should always produce same output
+        assert_eq!(deterministic_hash_u64(42), deterministic_hash_u64(42));
+        assert_eq!(deterministic_hash_u64(0), deterministic_hash_u64(0));
+        assert_eq!(
+            deterministic_hash_u64(u64::MAX),
+            deterministic_hash_u64(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn test_deterministic_hash_u64_different_inputs() {
+        // Different inputs should produce different outputs
+        assert_ne!(deterministic_hash_u64(0), deterministic_hash_u64(1));
+        assert_ne!(deterministic_hash_u64(42), deterministic_hash_u64(43));
+    }
+
+    #[test]
+    fn test_deterministic_hash_bytes_is_deterministic() {
+        assert_eq!(
+            deterministic_hash_bytes(b"hello"),
+            deterministic_hash_bytes(b"hello")
+        );
+        assert_ne!(
+            deterministic_hash_bytes(b"hello"),
+            deterministic_hash_bytes(b"world")
+        );
+    }
+
+    #[test]
+    fn test_deterministic_hash_across_value_types() {
+        use pulsive_core::Value;
+
+        // Each type should produce deterministic hashes
+        assert_eq!(
+            deterministic_hash_value(&Value::Null),
+            deterministic_hash_value(&Value::Null)
+        );
+        assert_eq!(
+            deterministic_hash_value(&Value::Bool(true)),
+            deterministic_hash_value(&Value::Bool(true))
+        );
+        assert_eq!(
+            deterministic_hash_value(&Value::Int(42)),
+            deterministic_hash_value(&Value::Int(42))
+        );
+        assert_eq!(
+            deterministic_hash_value(&Value::Float(3.14)),
+            deterministic_hash_value(&Value::Float(3.14))
+        );
+
+        // Different types should produce different hashes
+        assert_ne!(
+            deterministic_hash_value(&Value::Int(0)),
+            deterministic_hash_value(&Value::Bool(false))
+        );
     }
 
     #[test]
