@@ -231,12 +231,15 @@ impl Hub {
     /// 3. Merge results back to global model
     /// 4. Advance version
     ///
-    /// # Note
+    /// # Execution Mode
     ///
-    /// The `core_count` configuration is stored for future parallel execution.
-    /// Currently, this method executes all groups sequentially regardless of
-    /// the configured core count. When parallel execution is implemented,
-    /// `core_count` will control worker thread allocation.
+    /// The execution strategy is selected based on `core_count`:
+    /// - `core_count == 1`: Sequential execution with zero parallel overhead
+    /// - `core_count > 1`: Parallel execution (when driver is implemented)
+    ///
+    /// See [Issue #55](https://github.com/weng-chenghui/pulsive/issues/55) for
+    /// the ExecutionDriver abstraction that will enable swappable drivers
+    /// (LocalDriver, RayonDriver, etc.).
     ///
     /// # Example
     ///
@@ -257,6 +260,20 @@ impl Hub {
             return Err(Error::NoGroups);
         }
 
+        // Dispatch based on core_count configuration
+        // See Issue #55 for ExecutionDriver trait abstraction
+        if self.config.core_count() == 1 {
+            self.tick_sequential()
+        } else {
+            self.tick_parallel()
+        }
+    }
+
+    /// Sequential tick execution (single-core mode)
+    ///
+    /// This is the zero-overhead path for single-core mode.
+    /// No thread pool, no parallel infrastructure.
+    fn tick_sequential(&mut self) -> Result<TickResult> {
         let mut all_updates = Vec::new();
 
         for group in &mut self.groups {
@@ -285,6 +302,29 @@ impl Hub {
             tick: self.model.current_tick(),
             updates: all_updates,
         })
+    }
+
+    /// Parallel tick execution (multi-core mode)
+    ///
+    /// This path is used when `core_count > 1`.
+    ///
+    /// # Current Implementation
+    ///
+    /// Currently delegates to sequential execution. When the ExecutionDriver
+    /// abstraction is implemented (Issue #55), this will use RayonDriver
+    /// (Issue #58) or other parallel drivers.
+    ///
+    /// # Future Implementation
+    ///
+    /// Will use the configured ExecutionDriver to parallelize core execution
+    /// within groups, respecting the `core_count` setting for thread pool size.
+    fn tick_parallel(&mut self) -> Result<TickResult> {
+        // TODO(#55): Use ExecutionDriver for parallel execution
+        // TODO(#58): Implement RayonDriver for rayon-based parallelism
+        //
+        // For now, delegate to sequential execution.
+        // The dispatch structure is in place for when drivers are implemented.
+        self.tick_sequential()
     }
 
     /// Get the current tick from the global model
