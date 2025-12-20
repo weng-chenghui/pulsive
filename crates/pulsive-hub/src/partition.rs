@@ -1,20 +1,28 @@
 //! Partition Strategies for distributing entities across cores
 //!
 //! This module provides strategies for partitioning entities across multiple cores
-//! in a parallel execution environment. The partitioning is deterministic to ensure
-//! reproducible results regardless of execution order.
+//! in a parallel execution environment. The partitioning is deterministic and
+//! seed-configurable, ensuring reproducible results.
 //!
 //! # Strategies
 //!
-//! - [`PartitionStrategy::ById`]: Round-robin partitioning by entity ID
-//! - [`PartitionStrategy::ByOwner`]: Partition by an owner property value
-//! - [`PartitionStrategy::SpatialGrid`]: 2D spatial grid partitioning
-//! - [`PartitionStrategy::Custom`]: User-defined partitioning function
+//! - [`PartitionKind::ById`]: Round-robin partitioning by entity ID
+//! - [`PartitionKind::ByOwner`]: Partition by an owner property value
+//! - [`PartitionKind::SpatialGrid`]: 2D spatial grid partitioning
+//! - [`PartitionKind::Custom`]: User-defined partitioning function
+//!
+//! # Seed Configuration
+//!
+//! Partition strategies use the hub's deterministic hashing infrastructure.
+//! By default, [`DEFAULT_GLOBAL_SEED`] is used,
+//! but you can provide a custom seed via [`PartitionStrategy::with_seed`] or
+//! use the hub's [`HubConfig::global_seed()`](crate::HubConfig::global_seed).
 //!
 //! # Example
 //!
 //! ```
-//! use pulsive_hub::partition::{PartitionStrategy, PartitionResult};
+//! use pulsive_hub::partition::{PartitionStrategy, PartitionKind, PartitionResult};
+//! use pulsive_hub::DEFAULT_GLOBAL_SEED;
 //! use pulsive_core::{Entity, EntityStore, EntityId};
 //!
 //! // Create an entity store with some entities
@@ -23,24 +31,30 @@
 //!     store.create("unit");
 //! }
 //!
-//! // Partition by ID (round-robin)
+//! // Partition by ID (round-robin) with default seed
 //! let strategy = PartitionStrategy::by_id();
 //! let result = strategy.partition(&store, 4);
 //!
 //! assert_eq!(result.partition_count(), 4);
 //! assert_eq!(result.total_entities(), 10);
+//!
+//! // With custom seed for different partition layout
+//! let strategy = PartitionStrategy::with_seed(PartitionKind::ById, 42);
 //! ```
 
+use crate::config::hash_seed;
+use crate::hash::{hash_u64_with_seed, hash_value_with_seed};
 use crate::CoreId;
+use crate::DEFAULT_GLOBAL_SEED;
 use pulsive_core::{Entity, EntityId, EntityStore};
 use std::sync::Arc;
 
 /// Type alias for the custom partitioner function
 pub type PartitionFn = Arc<dyn Fn(&Entity) -> usize + Send + Sync>;
 
-/// Strategy for partitioning entities across cores
+/// The kind of partitioning strategy to use
 #[derive(Clone)]
-pub enum PartitionStrategy {
+pub enum PartitionKind {
     /// Round-robin partitioning by entity ID
     ///
     /// Entities are distributed evenly across cores based on their ID:
@@ -59,7 +73,10 @@ pub enum PartitionStrategy {
     /// Partition by an owner property value
     ///
     /// Entities with the same owner value are assigned to the same core.
-    /// The owner value is hashed to determine the core assignment.
+    /// The owner value is hashed using the strategy's seed.
+    ///
+    /// If the owner property is missing, falls back to hashing the entity ID
+    /// to avoid hot-spotting all entities to one core.
     ///
     /// # Example
     ///
@@ -107,24 +124,103 @@ pub enum PartitionStrategy {
     Custom(PartitionFn),
 }
 
+impl std::fmt::Debug for PartitionKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PartitionKind::ById => write!(f, "ById"),
+            PartitionKind::ByOwner { property } => f
+                .debug_struct("ByOwner")
+                .field("property", property)
+                .finish(),
+            PartitionKind::SpatialGrid {
+                cell_size,
+                x_prop,
+                y_prop,
+            } => f
+                .debug_struct("SpatialGrid")
+                .field("cell_size", cell_size)
+                .field("x_prop", x_prop)
+                .field("y_prop", y_prop)
+                .finish(),
+            PartitionKind::Custom(_) => write!(f, "Custom(...)"),
+        }
+    }
+}
+
+/// Strategy for partitioning entities across cores
+///
+/// Combines a [`PartitionKind`] with a seed for deterministic hashing.
+/// The seed defaults to [`DEFAULT_GLOBAL_SEED`] but can be customized
+/// to produce different partition layouts.
+///
+/// # Example
+///
+/// ```
+/// use pulsive_hub::partition::{PartitionStrategy, PartitionKind};
+/// use pulsive_hub::DEFAULT_GLOBAL_SEED;
+///
+/// // Default seed
+/// let strategy = PartitionStrategy::by_id();
+/// assert_eq!(strategy.seed(), DEFAULT_GLOBAL_SEED);
+///
+/// // Custom seed
+/// let strategy = PartitionStrategy::with_seed(PartitionKind::ById, 42);
+/// assert_eq!(strategy.seed(), 42);
+/// ```
+#[derive(Clone)]
+pub struct PartitionStrategy {
+    /// The kind of partitioning to use
+    kind: PartitionKind,
+    /// Seed for deterministic hashing
+    seed: u64,
+}
+
 impl PartitionStrategy {
+    /// Create a partition strategy with a specific kind and seed
+    ///
+    /// # Arguments
+    ///
+    /// * `kind` - The partitioning algorithm to use
+    /// * `seed` - Seed for deterministic hashing
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::partition::{PartitionStrategy, PartitionKind};
+    ///
+    /// let strategy = PartitionStrategy::with_seed(PartitionKind::ById, 42);
+    /// assert_eq!(strategy.seed(), 42);
+    /// ```
+    pub fn with_seed(kind: PartitionKind, seed: u64) -> Self {
+        Self { kind, seed }
+    }
+
     /// Create a round-robin by-ID partitioning strategy
+    ///
+    /// Uses the default global seed.
     pub fn by_id() -> Self {
-        PartitionStrategy::ById
+        Self::with_seed(PartitionKind::ById, DEFAULT_GLOBAL_SEED)
     }
 
     /// Create an owner-based partitioning strategy
+    ///
+    /// Uses the default global seed.
     ///
     /// # Arguments
     ///
     /// * `property` - The property name containing the owner identifier
     pub fn by_owner(property: impl Into<String>) -> Self {
-        PartitionStrategy::ByOwner {
-            property: property.into(),
-        }
+        Self::with_seed(
+            PartitionKind::ByOwner {
+                property: property.into(),
+            },
+            DEFAULT_GLOBAL_SEED,
+        )
     }
 
     /// Create a spatial grid partitioning strategy
+    ///
+    /// Uses the default global seed.
     ///
     /// # Arguments
     ///
@@ -141,14 +237,19 @@ impl PartitionStrategy {
         y_prop: impl Into<String>,
     ) -> Self {
         assert!(cell_size > 0.0, "cell_size must be positive");
-        PartitionStrategy::SpatialGrid {
-            cell_size,
-            x_prop: x_prop.into(),
-            y_prop: y_prop.into(),
-        }
+        Self::with_seed(
+            PartitionKind::SpatialGrid {
+                cell_size,
+                x_prop: x_prop.into(),
+                y_prop: y_prop.into(),
+            },
+            DEFAULT_GLOBAL_SEED,
+        )
     }
 
     /// Create a custom partitioning strategy
+    ///
+    /// Uses the default global seed.
     ///
     /// # Arguments
     ///
@@ -157,7 +258,17 @@ impl PartitionStrategy {
     where
         F: Fn(&Entity) -> usize + Send + Sync + 'static,
     {
-        PartitionStrategy::Custom(Arc::new(f))
+        Self::with_seed(PartitionKind::Custom(Arc::new(f)), DEFAULT_GLOBAL_SEED)
+    }
+
+    /// Get the seed used for deterministic hashing
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Get the partition kind
+    pub fn kind(&self) -> &PartitionKind {
+        &self.kind
     }
 
     /// Partition entities from a store into groups for each core
@@ -209,25 +320,25 @@ impl PartitionStrategy {
     pub fn assign_core(&self, entity: &Entity, core_count: usize) -> usize {
         assert!(core_count > 0, "core_count must be at least 1");
 
-        match self {
-            PartitionStrategy::ById => {
+        match &self.kind {
+            PartitionKind::ById => {
                 // Round-robin by entity ID
                 entity.id.raw() as usize % core_count
             }
 
-            PartitionStrategy::ByOwner { property } => {
+            PartitionKind::ByOwner { property } => {
                 // Hash the owner property value to get core assignment
                 if let Some(value) = entity.get(property) {
-                    let hash = deterministic_hash_value(value);
+                    let hash = hash_value_with_seed(value, self.seed);
                     hash as usize % core_count
                 } else {
                     // Fallback: hash entity ID for balanced distribution
                     // instead of hot-spotting all to core 0
-                    deterministic_hash_u64(entity.id.raw()) as usize % core_count
+                    hash_u64_with_seed(entity.id.raw(), self.seed) as usize % core_count
                 }
             }
 
-            PartitionStrategy::SpatialGrid {
+            PartitionKind::SpatialGrid {
                 cell_size,
                 x_prop,
                 y_prop,
@@ -240,13 +351,12 @@ impl PartitionStrategy {
                 let cell_x = (x / cell_size).floor() as i64;
                 let cell_y = (y / cell_size).floor() as i64;
 
-                // Hash the cell coordinates to get core assignment
-                // We use a simple spatial hashing scheme
-                let hash = spatial_hash(cell_x, cell_y);
+                // Hash the cell coordinates using the seed
+                let hash = spatial_hash_with_seed(cell_x, cell_y, self.seed);
                 hash as usize % core_count
             }
 
-            PartitionStrategy::Custom(f) => {
+            PartitionKind::Custom(f) => {
                 // Use the custom function, then mod by core_count
                 f(entity) % core_count
             }
@@ -256,24 +366,10 @@ impl PartitionStrategy {
 
 impl std::fmt::Debug for PartitionStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PartitionStrategy::ById => write!(f, "PartitionStrategy::ById"),
-            PartitionStrategy::ByOwner { property } => f
-                .debug_struct("PartitionStrategy::ByOwner")
-                .field("property", property)
-                .finish(),
-            PartitionStrategy::SpatialGrid {
-                cell_size,
-                x_prop,
-                y_prop,
-            } => f
-                .debug_struct("PartitionStrategy::SpatialGrid")
-                .field("cell_size", cell_size)
-                .field("x_prop", x_prop)
-                .field("y_prop", y_prop)
-                .finish(),
-            PartitionStrategy::Custom(_) => write!(f, "PartitionStrategy::Custom(...)"),
-        }
+        f.debug_struct("PartitionStrategy")
+            .field("kind", &self.kind)
+            .field("seed", &self.seed)
+            .finish()
     }
 }
 
@@ -371,124 +467,24 @@ impl PartitionResult {
 }
 
 // ============================================================================
-// Helper Functions - Deterministic Hashing
+// Helper Functions
 // ============================================================================
 
-// Fixed seed constant for deterministic hashing across runs.
-// This ensures partition assignments are reproducible.
-const HASH_SEED: u64 = 0x517cc1b727220a95;
-
-/// Deterministic hash for a u64 value
+/// Spatial hash function for 2D grid coordinates with seed
 ///
-/// Uses a fixed-key mixing function to ensure reproducible results
-/// across runs and platforms.
-fn deterministic_hash_u64(value: u64) -> u64 {
-    let mut h = HASH_SEED;
-    h = h.wrapping_mul(0x517cc1b727220a95);
-    h ^= value;
-    h = h.wrapping_mul(0x517cc1b727220a95);
-    h ^= h >> 32;
-    h
-}
-
-/// Deterministic hash for a byte slice
-///
-/// FNV-1a inspired hash with a fixed seed for deterministic results.
-fn deterministic_hash_bytes(bytes: &[u8]) -> u64 {
-    let mut h = HASH_SEED;
-    for &b in bytes {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3); // FNV prime
-    }
-    h
-}
-
-/// Hash a Value for partitioning purposes
-///
-/// Uses deterministic hashing with fixed seeds to ensure reproducible
-/// partition assignments across runs. Each value type includes a type
-/// discriminator to ensure different types produce different hashes.
-fn deterministic_hash_value(value: &pulsive_core::Value) -> u64 {
-    use pulsive_core::Value;
-
-    // Type discriminators to ensure different types hash differently
-    const TYPE_NULL: u64 = 0;
-    const TYPE_BOOL: u64 = 1;
-    const TYPE_INT: u64 = 2;
-    const TYPE_FLOAT: u64 = 3;
-    const TYPE_STRING: u64 = 4;
-    const TYPE_ENTITY_REF: u64 = 5;
-    const TYPE_LIST: u64 = 6;
-    const TYPE_MAP: u64 = 7;
-
-    match value {
-        Value::Null => {
-            let mut h = deterministic_hash_u64(TYPE_NULL);
-            h ^= deterministic_hash_u64(0);
-            h
-        }
-        Value::Bool(b) => {
-            let mut h = deterministic_hash_u64(TYPE_BOOL);
-            h ^= deterministic_hash_u64(if *b { 1 } else { 0 });
-            h
-        }
-        Value::Int(i) => {
-            let mut h = deterministic_hash_u64(TYPE_INT);
-            h ^= deterministic_hash_u64(*i as u64);
-            h
-        }
-        Value::Float(f) => {
-            let mut h = deterministic_hash_u64(TYPE_FLOAT);
-            h ^= deterministic_hash_u64(f.to_bits());
-            h
-        }
-        Value::String(s) => {
-            let mut h = deterministic_hash_u64(TYPE_STRING);
-            h ^= deterministic_hash_bytes(s.as_bytes());
-            h
-        }
-        Value::EntityRef(id) => {
-            let mut h = deterministic_hash_u64(TYPE_ENTITY_REF);
-            h ^= deterministic_hash_u64(id.raw());
-            h
-        }
-        Value::List(list) => {
-            let mut h = deterministic_hash_u64(TYPE_LIST);
-            for v in list {
-                h = h.wrapping_mul(0x517cc1b727220a95);
-                h ^= deterministic_hash_value(v);
-            }
-            h
-        }
-        Value::Map(map) => {
-            let mut h = deterministic_hash_u64(TYPE_MAP);
-            for (k, v) in map {
-                h = h.wrapping_mul(0x517cc1b727220a95);
-                h ^= deterministic_hash_bytes(k.as_bytes());
-                h = h.wrapping_mul(0x517cc1b727220a95);
-                h ^= deterministic_hash_value(v);
-            }
-            h
-        }
-    }
-}
-
-/// Spatial hash function for 2D grid coordinates
-///
-/// Uses a simple but effective hash that distributes cells evenly.
-fn spatial_hash(x: i64, y: i64) -> u64 {
-    // Use the Cantor pairing function with wrapping for negative values
-    // Then apply a mixing step for better distribution
+/// Uses the hub's `hash_seed` function to combine the seed with
+/// spatial coordinates for deterministic, configurable hashing.
+fn spatial_hash_with_seed(x: i64, y: i64, seed: u64) -> u64 {
+    // Convert to unsigned, handling negative values
     let ux = x.wrapping_add(i64::MAX / 2) as u64;
     let uy = y.wrapping_add(i64::MAX / 2) as u64;
 
-    // Mix the coordinates using a simple hash
-    let mut hash = ux.wrapping_mul(2654435761);
-    hash ^= uy.wrapping_mul(2246822519);
-    hash ^= hash >> 16;
-    hash = hash.wrapping_mul(0x85ebca6b);
-    hash ^= hash >> 13;
-    hash
+    // Use hash_seed to mix the coordinates with the seed
+    // x goes in "core_id" slot, y goes in "tick" slot
+    let h = hash_seed(seed, ux, uy);
+
+    // Additional mixing for better distribution
+    hash_seed(h, ux ^ uy, 0)
 }
 
 // ============================================================================
@@ -826,6 +822,115 @@ mod tests {
     }
 
     // ========================================================================
+    // Seed Configuration Tests
+    // ========================================================================
+
+    #[test]
+    fn test_default_seed() {
+        let strategy = PartitionStrategy::by_id();
+        assert_eq!(strategy.seed(), DEFAULT_GLOBAL_SEED);
+    }
+
+    #[test]
+    fn test_with_seed() {
+        let strategy = PartitionStrategy::with_seed(PartitionKind::ById, 42);
+        assert_eq!(strategy.seed(), 42);
+    }
+
+    #[test]
+    fn test_different_seeds_affect_hashing() {
+        use crate::hash::hash_value_with_seed;
+        use pulsive_core::Value;
+
+        // Verify that different seeds produce different hash values
+        let value = Value::String("test_owner".into());
+
+        let hash1 = hash_value_with_seed(&value, 12345);
+        let hash2 = hash_value_with_seed(&value, 99999);
+
+        assert_ne!(
+            hash1, hash2,
+            "Different seeds should produce different hash values"
+        );
+
+        // Also verify this affects assign_core for the same entity
+        let mut store = EntityStore::new();
+        let entity = store.create("unit");
+        entity.set("owner_id", "test_owner");
+
+        let entity = store.get(EntityId::new(0)).unwrap();
+
+        let strategy1 = PartitionStrategy::with_seed(
+            PartitionKind::ByOwner {
+                property: "owner_id".to_string(),
+            },
+            12345,
+        );
+        let strategy2 = PartitionStrategy::with_seed(
+            PartitionKind::ByOwner {
+                property: "owner_id".to_string(),
+            },
+            99999,
+        );
+
+        // The raw hash values should differ
+        let raw_hash1 = hash_value_with_seed(&Value::String("test_owner".into()), 12345);
+        let raw_hash2 = hash_value_with_seed(&Value::String("test_owner".into()), 99999);
+        assert_ne!(raw_hash1, raw_hash2, "Raw hashes should differ");
+
+        // Core assignments MAY be the same (modulo can produce same result)
+        // but over many cores, they should eventually differ
+        let mut found_different = false;
+        for core_count in 2..=16 {
+            let c1 = strategy1.assign_core(entity, core_count);
+            let c2 = strategy2.assign_core(entity, core_count);
+            if c1 != c2 {
+                found_different = true;
+                break;
+            }
+        }
+
+        assert!(
+            found_different,
+            "Different seeds should eventually produce different core assignments across various core counts"
+        );
+    }
+
+    #[test]
+    fn test_same_seed_produces_same_partitions() {
+        let mut store = EntityStore::new();
+        for i in 0..20 {
+            let entity = store.create("unit");
+            entity.set("owner_id", format!("nation_{}", i % 5));
+        }
+
+        let strategy1 = PartitionStrategy::with_seed(
+            PartitionKind::ByOwner {
+                property: "owner_id".to_string(),
+            },
+            42,
+        );
+        let strategy2 = PartitionStrategy::with_seed(
+            PartitionKind::ByOwner {
+                property: "owner_id".to_string(),
+            },
+            42,
+        );
+
+        let result1 = strategy1.partition(&store, 4);
+        let result2 = strategy2.partition(&store, 4);
+
+        // Same seed should produce same layouts
+        for i in 0..4 {
+            assert_eq!(
+                result1.get(CoreId(i)),
+                result2.get(CoreId(i)),
+                "Same seed should produce same partition layout"
+            );
+        }
+    }
+
+    // ========================================================================
     // PartitionResult Tests
     // ========================================================================
 
@@ -910,133 +1015,77 @@ mod tests {
     // ========================================================================
 
     #[test]
-    fn test_debug_by_id() {
+    fn test_debug_strategy() {
         let strategy = PartitionStrategy::by_id();
         let debug = format!("{:?}", strategy);
+        assert!(debug.contains("PartitionStrategy"));
         assert!(debug.contains("ById"));
+        assert!(debug.contains("seed"));
     }
 
     #[test]
-    fn test_debug_by_owner() {
-        let strategy = PartitionStrategy::by_owner("owner_id");
-        let debug = format!("{:?}", strategy);
+    fn test_debug_kind_by_owner() {
+        let kind = PartitionKind::ByOwner {
+            property: "owner_id".to_string(),
+        };
+        let debug = format!("{:?}", kind);
         assert!(debug.contains("ByOwner"));
         assert!(debug.contains("owner_id"));
     }
 
     #[test]
-    fn test_debug_spatial_grid() {
-        let strategy = PartitionStrategy::spatial_grid(100.0, "x", "y");
-        let debug = format!("{:?}", strategy);
+    fn test_debug_kind_spatial_grid() {
+        let kind = PartitionKind::SpatialGrid {
+            cell_size: 100.0,
+            x_prop: "x".to_string(),
+            y_prop: "y".to_string(),
+        };
+        let debug = format!("{:?}", kind);
         assert!(debug.contains("SpatialGrid"));
         assert!(debug.contains("100"));
     }
 
     #[test]
-    fn test_debug_custom() {
-        let strategy = PartitionStrategy::custom(|_| 0);
-        let debug = format!("{:?}", strategy);
+    fn test_debug_kind_custom() {
+        let kind = PartitionKind::Custom(Arc::new(|_| 0));
+        let debug = format!("{:?}", kind);
         assert!(debug.contains("Custom"));
     }
 
     // ========================================================================
-    // Hash Function Tests
+    // Spatial Hash Tests
     // ========================================================================
 
     #[test]
-    fn test_deterministic_hash_value_is_deterministic() {
-        use pulsive_core::Value;
-
-        let v1 = Value::String("test".into());
-        let v2 = Value::String("test".into());
-
-        assert_eq!(deterministic_hash_value(&v1), deterministic_hash_value(&v2));
-    }
-
-    #[test]
-    fn test_deterministic_hash_value_different_for_different_values() {
-        use pulsive_core::Value;
-
-        let v1 = Value::String("france".into());
-        let v2 = Value::String("england".into());
-
-        assert_ne!(deterministic_hash_value(&v1), deterministic_hash_value(&v2));
-    }
-
-    #[test]
-    fn test_deterministic_hash_u64_is_deterministic() {
-        // Same input should always produce same output
-        assert_eq!(deterministic_hash_u64(42), deterministic_hash_u64(42));
-        assert_eq!(deterministic_hash_u64(0), deterministic_hash_u64(0));
-        assert_eq!(
-            deterministic_hash_u64(u64::MAX),
-            deterministic_hash_u64(u64::MAX)
-        );
-    }
-
-    #[test]
-    fn test_deterministic_hash_u64_different_inputs() {
-        // Different inputs should produce different outputs
-        assert_ne!(deterministic_hash_u64(0), deterministic_hash_u64(1));
-        assert_ne!(deterministic_hash_u64(42), deterministic_hash_u64(43));
-    }
-
-    #[test]
-    fn test_deterministic_hash_bytes_is_deterministic() {
-        assert_eq!(
-            deterministic_hash_bytes(b"hello"),
-            deterministic_hash_bytes(b"hello")
-        );
-        assert_ne!(
-            deterministic_hash_bytes(b"hello"),
-            deterministic_hash_bytes(b"world")
-        );
-    }
-
-    #[test]
-    fn test_deterministic_hash_across_value_types() {
-        use pulsive_core::Value;
-
-        // Each type should produce deterministic hashes
-        assert_eq!(
-            deterministic_hash_value(&Value::Null),
-            deterministic_hash_value(&Value::Null)
-        );
-        assert_eq!(
-            deterministic_hash_value(&Value::Bool(true)),
-            deterministic_hash_value(&Value::Bool(true))
-        );
-        assert_eq!(
-            deterministic_hash_value(&Value::Int(42)),
-            deterministic_hash_value(&Value::Int(42))
-        );
-        assert_eq!(
-            deterministic_hash_value(&Value::Float(3.14)),
-            deterministic_hash_value(&Value::Float(3.14))
-        );
-
-        // Different types should produce different hashes
-        assert_ne!(
-            deterministic_hash_value(&Value::Int(0)),
-            deterministic_hash_value(&Value::Bool(false))
-        );
-    }
-
-    #[test]
     fn test_spatial_hash_deterministic() {
-        assert_eq!(spatial_hash(10, 20), spatial_hash(10, 20));
-        assert_ne!(spatial_hash(10, 20), spatial_hash(20, 10));
+        let h1 = spatial_hash_with_seed(10, 20, DEFAULT_GLOBAL_SEED);
+        let h2 = spatial_hash_with_seed(10, 20, DEFAULT_GLOBAL_SEED);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn test_spatial_hash_different_coords() {
+        let h1 = spatial_hash_with_seed(10, 20, DEFAULT_GLOBAL_SEED);
+        let h2 = spatial_hash_with_seed(20, 10, DEFAULT_GLOBAL_SEED);
+        assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_spatial_hash_different_seeds() {
+        let h1 = spatial_hash_with_seed(10, 20, 100);
+        let h2 = spatial_hash_with_seed(10, 20, 200);
+        assert_ne!(h1, h2);
     }
 
     #[test]
     fn test_spatial_hash_negative_coords() {
         // Should not panic and produce valid hashes
-        let h1 = spatial_hash(-100, -200);
-        let h2 = spatial_hash(-100, -200);
+        let h1 = spatial_hash_with_seed(-100, -200, DEFAULT_GLOBAL_SEED);
+        let h2 = spatial_hash_with_seed(-100, -200, DEFAULT_GLOBAL_SEED);
         assert_eq!(h1, h2);
 
         // Different negative coords should produce different hashes
-        let h3 = spatial_hash(-100, -201);
+        let h3 = spatial_hash_with_seed(-100, -201, DEFAULT_GLOBAL_SEED);
         assert_ne!(h1, h3);
     }
 }
