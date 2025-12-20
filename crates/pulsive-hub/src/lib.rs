@@ -35,7 +35,9 @@ pub mod conflict;
 mod core;
 mod error;
 mod group;
+pub mod hash;
 mod hub;
+pub mod partition;
 mod snapshot;
 mod tick_sync;
 
@@ -50,5 +52,6 @@ pub use core::{Core, CoreId};
 pub use error::{Error, Result};
 pub use group::{CoreGroup, GroupId};
 pub use hub::Hub;
+pub use partition::{PartitionFn, PartitionKind, PartitionResult, PartitionStrategy};
 pub use snapshot::ModelSnapshot;
 pub use tick_sync::TickSyncGroup;
