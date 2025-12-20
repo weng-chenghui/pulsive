@@ -120,33 +120,15 @@ impl Hub {
     /// use pulsive_core::Model;
     ///
     /// // Using default config (uses DEFAULT_GLOBAL_SEED)
-    /// let hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
+    /// let hub = Hub::with_default_group(Model::new(), HubConfig::default());
     ///
     /// // Using custom seed
     /// let config = HubConfig::with_seed(42);
-    /// let hub = Hub::with_default_group_from_config(Model::new(), config);
+    /// let hub = Hub::with_default_group(Model::new(), config);
     /// ```
-    pub fn with_default_group_from_config(model: Model, config: HubConfig) -> Self {
+    pub fn with_default_group(model: Model, config: HubConfig) -> Self {
         let seed = config.global_seed();
         let mut hub = Self::with_config(model, config);
-        hub.add_group(TickSyncGroup::single(GroupId(0), seed));
-        hub
-    }
-
-    /// Create a hub with a default single-core group
-    ///
-    /// **Note**: This method uses an explicit seed that is separate from
-    /// `HubConfig.global_seed()`. For consistent RNG between `Hub::create_core_rng()`
-    /// and groups, use `with_default_group_from_config()` instead, or ensure
-    /// you pass the same seed to both.
-    ///
-    /// The hub starts in single-core mode (zero parallel overhead).
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use with_default_group_from_config() to ensure hub's global_seed is used"
-    )]
-    pub fn with_default_group(model: Model, seed: u64) -> Self {
-        let mut hub = Self::with_model(model);
         hub.add_group(TickSyncGroup::single(GroupId(0), seed));
         hub
     }
@@ -355,7 +337,7 @@ impl Hub {
     /// use pulsive_hub::{Hub, HubConfig, TickSyncGroup, GroupId};
     /// use pulsive_core::Model;
     ///
-    /// let mut hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
+    /// let mut hub = Hub::with_default_group(Model::new(), HubConfig::default());
     ///
     /// let result = hub.tick().unwrap();
     /// assert_eq!(result.tick, 1);
@@ -472,8 +454,8 @@ mod tests {
     }
 
     #[test]
-    fn test_hub_with_default_group_from_config() {
-        let hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
+    fn test_hub_with_default_group() {
+        let hub = Hub::with_default_group(Model::new(), HubConfig::default());
         assert_eq!(hub.group_count(), 1);
     }
 
@@ -486,7 +468,7 @@ mod tests {
 
     #[test]
     fn test_hub_tick() {
-        let mut hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
+        let mut hub = Hub::with_default_group(Model::new(), HubConfig::default());
 
         // Run a tick
         let result = hub.tick();
@@ -584,7 +566,7 @@ mod tests {
 
     #[test]
     fn test_can_change_core_count_between_ticks() {
-        let mut hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
+        let mut hub = Hub::with_default_group(Model::new(), HubConfig::default());
 
         // Start in single-core mode
         assert_eq!(hub.core_count(), 1);
@@ -998,24 +980,22 @@ mod tests {
         }
     }
 
-    /// Test: with_default_group_from_config uses config's global_seed
+    /// Test: with_default_group uses config's global_seed
     #[test]
-    fn test_with_default_group_from_config_uses_global_seed() {
+    fn test_with_default_group_uses_global_seed() {
         let seed = 99999;
         let config = HubConfig::with_seed(seed);
-        let hub = Hub::with_default_group_from_config(Model::new(), config);
+        let hub = Hub::with_default_group(Model::new(), config);
 
         // The hub's global_seed should match
         assert_eq!(hub.global_seed(), seed);
 
         // Run a tick to verify determinism
-        let mut hub1 =
-            Hub::with_default_group_from_config(Model::new(), HubConfig::with_seed(seed));
+        let mut hub1 = Hub::with_default_group(Model::new(), HubConfig::with_seed(seed));
         hub1.model_mut().set_global("test", 0.0f64);
         hub1.tick().unwrap();
 
-        let mut hub2 =
-            Hub::with_default_group_from_config(Model::new(), HubConfig::with_seed(seed));
+        let mut hub2 = Hub::with_default_group(Model::new(), HubConfig::with_seed(seed));
         hub2.model_mut().set_global("test", 0.0f64);
         hub2.tick().unwrap();
 
