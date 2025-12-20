@@ -14,7 +14,6 @@
 //!
 //! This ensures reproducible results when replaying simulations.
 
-use crate::config::hash_seed;
 use crate::core::{Core, CoreId};
 use crate::group::{CoreGroup, GroupId};
 use pulsive_core::{Model, Runtime, UpdateResult};
@@ -49,12 +48,19 @@ impl TickSyncGroup {
     }
 
     /// Create a group with N cores using default runtime
+    ///
+    /// Each core stores the `base_seed` and derives its per-tick RNG using:
+    /// `hash(base_seed, core_id, tick)`
+    ///
+    /// This matches the formula used by `Hub::create_core_rng()`.
     pub fn with_core_count(id: GroupId, count: usize, base_seed: u64) -> Self {
         let cores = (0..count)
             .map(|i| {
                 let core_id = CoreId(i);
-                let seed = hash_seed(base_seed, i as u64, 0);
-                Core::with_seed(core_id, seed)
+                // Store the base_seed directly - Core will hash it with (core_id, tick)
+                // when load_model() is called. This ensures the formula matches
+                // Hub::create_core_rng(core_id, tick) = hash(base_seed, core_id, tick)
+                Core::with_seed(core_id, base_seed)
             })
             .collect();
 
@@ -81,6 +87,13 @@ impl TickSyncGroup {
         &mut self.cores
     }
 
+    /// Get the base seed used for RNG derivation
+    ///
+    /// Each core's RNG is derived using: `hash(base_seed, core_id, tick)`
+    pub fn base_seed(&self) -> u64 {
+        self.base_seed
+    }
+
     /// Register an event handler on all cores
     pub fn on_event(&mut self, handler: pulsive_core::EventHandler) {
         for core in &mut self.cores {
@@ -98,7 +111,10 @@ impl TickSyncGroup {
     /// Create a TickSyncGroup from an existing runtime
     ///
     /// This is useful when you want to reuse a configured runtime.
+    /// The `seed` is stored as the base seed and used with the formula:
+    /// `hash(seed, core_id, tick)` to derive per-tick RNG.
     pub fn from_runtime(id: GroupId, runtime: Runtime, seed: u64) -> Self {
+        // Store base_seed directly - Core will hash it with (core_id, tick)
         let core = Core::new(CoreId(0), runtime, seed);
         Self::new(id, vec![core], seed)
     }
@@ -141,17 +157,11 @@ impl CoreGroup for TickSyncGroup {
 
     fn advance_tick(&mut self) {
         self.tick += 1;
-        // Re-seed RNGs for determinism
-        for (i, core) in self.cores.iter_mut().enumerate() {
-            core.reseed_rng(self.tick);
-            // Also update the seed for the new tick
-            let new_seed = hash_seed(self.base_seed, i as u64, self.tick);
-            core.model.rng = pulsive_core::Rng::new(new_seed);
-        }
+        // Note: RNG reseeding happens in load_model() at the start of the next tick.
+        // This ensures the RNG is seeded based on the model's actual tick, not the
+        // group's tick counter. The formula is: hash(base_seed, core_id, model_tick)
     }
 }
-
-// Note: hash_seed is imported from crate::config
 
 impl std::fmt::Debug for TickSyncGroup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

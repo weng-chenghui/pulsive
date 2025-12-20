@@ -107,9 +107,44 @@ impl Hub {
         }
     }
 
-    /// Create a hub with a default single-core group
+    /// Create a hub with a default single-core group using the config's global seed
     ///
     /// The hub starts in single-core mode (zero parallel overhead).
+    /// The group uses `config.global_seed()` as its base seed, ensuring the
+    /// RNG inside the group matches `Hub::create_core_rng()`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::{Hub, HubConfig};
+    /// use pulsive_core::Model;
+    ///
+    /// // Using default config (uses DEFAULT_GLOBAL_SEED)
+    /// let hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
+    ///
+    /// // Using custom seed
+    /// let config = HubConfig::with_seed(42);
+    /// let hub = Hub::with_default_group_from_config(Model::new(), config);
+    /// ```
+    pub fn with_default_group_from_config(model: Model, config: HubConfig) -> Self {
+        let seed = config.global_seed();
+        let mut hub = Self::with_config(model, config);
+        hub.add_group(TickSyncGroup::single(GroupId(0), seed));
+        hub
+    }
+
+    /// Create a hub with a default single-core group
+    ///
+    /// **Note**: This method uses an explicit seed that is separate from
+    /// `HubConfig.global_seed()`. For consistent RNG between `Hub::create_core_rng()`
+    /// and groups, use `with_default_group_from_config()` instead, or ensure
+    /// you pass the same seed to both.
+    ///
+    /// The hub starts in single-core mode (zero parallel overhead).
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use with_default_group_from_config() to ensure hub's global_seed is used"
+    )]
     pub fn with_default_group(model: Model, seed: u64) -> Self {
         let mut hub = Self::with_model(model);
         hub.add_group(TickSyncGroup::single(GroupId(0), seed));
@@ -317,10 +352,10 @@ impl Hub {
     /// # Example
     ///
     /// ```
-    /// use pulsive_hub::{Hub, TickSyncGroup, GroupId};
+    /// use pulsive_hub::{Hub, HubConfig, TickSyncGroup, GroupId};
     /// use pulsive_core::Model;
     ///
-    /// let mut hub = Hub::with_default_group(Model::new(), 12345);
+    /// let mut hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
     ///
     /// let result = hub.tick().unwrap();
     /// assert_eq!(result.tick, 1);
@@ -426,6 +461,7 @@ impl std::fmt::Debug for Hub {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::CoreId;
     use pulsive_core::{DefId, Effect, Expr, TickHandler};
 
     #[test]
@@ -436,8 +472,8 @@ mod tests {
     }
 
     #[test]
-    fn test_hub_with_default_group() {
-        let hub = Hub::with_default_group(Model::new(), 12345);
+    fn test_hub_with_default_group_from_config() {
+        let hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
         assert_eq!(hub.group_count(), 1);
     }
 
@@ -450,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_hub_tick() {
-        let mut hub = Hub::with_default_group(Model::new(), 12345);
+        let mut hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
 
         // Run a tick
         let result = hub.tick();
@@ -548,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_can_change_core_count_between_ticks() {
-        let mut hub = Hub::with_default_group(Model::new(), 12345);
+        let mut hub = Hub::with_default_group_from_config(Model::new(), HubConfig::default());
 
         // Start in single-core mode
         assert_eq!(hub.core_count(), 1);
@@ -913,6 +949,139 @@ mod tests {
         assert_ne!(
             result1, result3,
             "Different seed should produce different results"
+        );
+    }
+
+    // ========================================================================
+    // Architecture Alignment Tests
+    // ========================================================================
+
+    /// Test: Group RNG matches Hub::create_core_rng()
+    ///
+    /// This is the critical test that ensures the RNG inside groups uses the
+    /// same formula as Hub::create_core_rng(). Both should produce:
+    /// `hash(global_seed, core_id, tick)`
+    #[test]
+    fn test_group_rng_matches_hub_create_core_rng() {
+        let seed = 42;
+        let config = HubConfig::with_seed(seed);
+        let hub = Hub::with_config(Model::new(), config.clone());
+
+        // Create a group with the same seed
+        let mut group = TickSyncGroup::with_core_count(GroupId(0), 4, seed);
+
+        // Test multiple ticks and cores
+        for tick in 0..5 {
+            // Create a model at this tick
+            let mut model = Model::new();
+            for _ in 0..tick {
+                model.advance_tick();
+            }
+
+            // Load model into group (this sets the RNG)
+            group.load_model(&model);
+
+            // Verify each core's RNG matches Hub::create_core_rng
+            for core_idx in 0..4 {
+                // Get the RNG value from the group's core
+                let group_rng_value = group.cores()[core_idx].model.rng.clone().next_u64();
+
+                // Get the RNG value from Hub::create_core_rng
+                let hub_rng_value = hub.create_core_rng(core_idx, tick).next_u64();
+
+                assert_eq!(
+                    group_rng_value, hub_rng_value,
+                    "RNG mismatch at core={}, tick={}: group produced {}, hub produced {}",
+                    core_idx, tick, group_rng_value, hub_rng_value
+                );
+            }
+        }
+    }
+
+    /// Test: with_default_group_from_config uses config's global_seed
+    #[test]
+    fn test_with_default_group_from_config_uses_global_seed() {
+        let seed = 99999;
+        let config = HubConfig::with_seed(seed);
+        let hub = Hub::with_default_group_from_config(Model::new(), config);
+
+        // The hub's global_seed should match
+        assert_eq!(hub.global_seed(), seed);
+
+        // Run a tick to verify determinism
+        let mut hub1 =
+            Hub::with_default_group_from_config(Model::new(), HubConfig::with_seed(seed));
+        hub1.model_mut().set_global("test", 0.0f64);
+        hub1.tick().unwrap();
+
+        let mut hub2 =
+            Hub::with_default_group_from_config(Model::new(), HubConfig::with_seed(seed));
+        hub2.model_mut().set_global("test", 0.0f64);
+        hub2.tick().unwrap();
+
+        // Same seed should produce same model state
+        assert_eq!(
+            hub1.model().get_global("test"),
+            hub2.model().get_global("test")
+        );
+    }
+
+    /// Test: Single formula across all execution paths
+    ///
+    /// Verify that: seed = hash(global_seed, core_id, tick)
+    /// is used consistently everywhere.
+    #[test]
+    fn test_single_rng_formula_everywhere() {
+        use crate::config::hash_seed;
+
+        let global_seed = 12345u64;
+        let core_id = 2usize;
+        let tick = 7u64;
+
+        // 1. Direct hash_seed call
+        let expected_seed = hash_seed(global_seed, core_id as u64, tick);
+
+        // 2. HubConfig::create_core_rng
+        let config = HubConfig::with_seed(global_seed);
+        let config_rng_state = config.create_core_rng(core_id, tick).state();
+        // Note: Rng::new adjusts state=0 to state=1, but our hash shouldn't produce 0
+        assert_eq!(
+            config_rng_state, expected_seed,
+            "HubConfig::create_core_rng should use hash(global_seed, core_id, tick)"
+        );
+
+        // 3. Hub::create_core_rng
+        let hub = Hub::with_config(Model::new(), config.clone());
+        let hub_rng_state = hub.create_core_rng(core_id, tick).state();
+        assert_eq!(
+            hub_rng_state, expected_seed,
+            "Hub::create_core_rng should use hash(global_seed, core_id, tick)"
+        );
+
+        // 4. Core RNG after load_model
+        let mut core = crate::Core::with_seed(CoreId(core_id), global_seed);
+        let mut model = Model::new();
+        for _ in 0..tick {
+            model.advance_tick();
+        }
+        core.load_model(model);
+        let core_rng_state = core.model.rng.state();
+        assert_eq!(
+            core_rng_state, expected_seed,
+            "Core::load_model should set RNG using hash(base_seed, core_id, tick)"
+        );
+
+        // 5. Group core RNG after load_model
+        let mut group = TickSyncGroup::with_core_count(GroupId(0), 4, global_seed);
+        let mut model = Model::new();
+        for _ in 0..tick {
+            model.advance_tick();
+        }
+        group.load_model(&model);
+        let group_core_rng_state = group.cores()[core_id].model.rng.state();
+        assert_eq!(
+            group_core_rng_state, expected_seed,
+            "Group core should have RNG using hash(base_seed, core_id, tick)"
         );
     }
 }
