@@ -214,6 +214,79 @@ impl Hub {
         &mut self.config
     }
 
+    /// Get the global seed
+    ///
+    /// Returns the master seed used for deriving per-core RNG seeds.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::{Hub, HubConfig};
+    /// use pulsive_core::Model;
+    ///
+    /// let config = HubConfig::with_seed(42);
+    /// let hub = Hub::with_config(Model::new(), config);
+    /// assert_eq!(hub.global_seed(), 42);
+    /// ```
+    pub fn global_seed(&self) -> u64 {
+        self.config.global_seed()
+    }
+
+    /// Set the global seed
+    ///
+    /// # Arguments
+    ///
+    /// * `seed` - Master seed for deterministic per-core RNG
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::Hub;
+    ///
+    /// let mut hub = Hub::new();
+    /// hub.set_global_seed(42);
+    /// assert_eq!(hub.global_seed(), 42);
+    /// ```
+    pub fn set_global_seed(&mut self, seed: u64) {
+        self.config.set_global_seed(seed);
+    }
+
+    /// Create a deterministic RNG for a specific core at a specific tick
+    ///
+    /// This combines the global seed with the core ID and tick to produce
+    /// a unique, deterministic RNG for each core at each tick.
+    ///
+    /// # Formula
+    ///
+    /// `seed = hash(global_seed, core_id, tick)`
+    ///
+    /// # Arguments
+    ///
+    /// * `core_id` - The core's identifier within a group
+    /// * `tick` - The simulation tick
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pulsive_hub::Hub;
+    ///
+    /// let mut hub = Hub::new();
+    /// hub.set_global_seed(42);
+    ///
+    /// // Same inputs produce same RNG
+    /// let mut rng1 = hub.create_core_rng(0, 5);
+    /// let mut rng2 = hub.create_core_rng(0, 5);
+    /// assert_eq!(rng1.next_u64(), rng2.next_u64());
+    ///
+    /// // Different cores get different RNG streams
+    /// let mut rng_core0 = hub.create_core_rng(0, 5);
+    /// let mut rng_core1 = hub.create_core_rng(1, 5);
+    /// assert_ne!(rng_core0.next_u64(), rng_core1.next_u64());
+    /// ```
+    pub fn create_core_rng(&self, core_id: usize, tick: u64) -> pulsive_core::Rng {
+        self.config.create_core_rng(core_id, tick)
+    }
+
     // ========================================================================
     // Snapshot and Tick
     // ========================================================================
@@ -560,5 +633,286 @@ mod tests {
         // Test mutable config accessor
         hub.config_mut().set_core_count(2);
         assert_eq!(hub.core_count(), 2.min(max_cores()));
+    }
+
+    // ========================================================================
+    // Global Seed and RNG Tests
+    // ========================================================================
+
+    #[test]
+    fn test_global_seed_accessors() {
+        let mut hub = Hub::new();
+
+        // Default seed
+        assert_eq!(hub.global_seed(), crate::config::DEFAULT_GLOBAL_SEED);
+
+        // Set custom seed
+        hub.set_global_seed(42);
+        assert_eq!(hub.global_seed(), 42);
+    }
+
+    #[test]
+    fn test_create_core_rng_deterministic() {
+        let mut hub = Hub::new();
+        hub.set_global_seed(42);
+
+        // Same inputs produce same RNG sequence
+        let mut rng1 = hub.create_core_rng(0, 5);
+        let mut rng2 = hub.create_core_rng(0, 5);
+
+        assert_eq!(rng1.next_u64(), rng2.next_u64());
+        assert_eq!(rng1.next_u64(), rng2.next_u64());
+        assert_eq!(rng1.next_u64(), rng2.next_u64());
+    }
+
+    #[test]
+    fn test_create_core_rng_independent_cores() {
+        let mut hub = Hub::new();
+        hub.set_global_seed(42);
+
+        // Different cores get different RNG streams
+        let mut rng_core0 = hub.create_core_rng(0, 5);
+        let mut rng_core1 = hub.create_core_rng(1, 5);
+
+        assert_ne!(rng_core0.next_u64(), rng_core1.next_u64());
+    }
+
+    #[test]
+    fn test_create_core_rng_independent_ticks() {
+        let mut hub = Hub::new();
+        hub.set_global_seed(42);
+
+        // Different ticks get different RNG streams
+        let mut rng_tick5 = hub.create_core_rng(0, 5);
+        let mut rng_tick6 = hub.create_core_rng(0, 6);
+
+        assert_ne!(rng_tick5.next_u64(), rng_tick6.next_u64());
+    }
+
+    // ========================================================================
+    // Per-Core Deterministic RNG - Acceptance Criteria Tests
+    // ========================================================================
+
+    /// Test: Same seed + same inputs = same outputs
+    ///
+    /// Running the same simulation with the same seed should produce
+    /// identical results every time.
+    #[test]
+    fn test_same_seed_produces_same_outputs() {
+        fn run_simulation(seed: u64) -> Vec<f64> {
+            let mut results = Vec::new();
+            let config = HubConfig::with_seed(seed);
+            let hub = Hub::with_config(Model::new(), config);
+
+            // Generate 10 random values across different cores and ticks
+            for tick in 0..5 {
+                for core in 0..2 {
+                    let mut rng = hub.create_core_rng(core, tick);
+                    results.push(rng.next_f64());
+                }
+            }
+            results
+        }
+
+        let run1 = run_simulation(12345);
+        let run2 = run_simulation(12345);
+
+        assert_eq!(run1, run2, "Same seed should produce identical outputs");
+    }
+
+    /// Test: Different seeds produce different outputs
+    #[test]
+    fn test_different_seeds_produce_different_outputs() {
+        fn run_simulation(seed: u64) -> Vec<f64> {
+            let config = HubConfig::with_seed(seed);
+            let hub = Hub::with_config(Model::new(), config);
+
+            (0..10)
+                .map(|i| {
+                    let mut rng = hub.create_core_rng(0, i);
+                    rng.next_f64()
+                })
+                .collect()
+        }
+
+        let run1 = run_simulation(12345);
+        let run2 = run_simulation(54321);
+
+        assert_ne!(
+            run1, run2,
+            "Different seeds should produce different outputs"
+        );
+    }
+
+    /// Test: RNG streams are independent between cores
+    ///
+    /// Each core should have its own independent RNG stream that doesn't
+    /// interfere with other cores.
+    #[test]
+    fn test_rng_streams_independent_between_cores() {
+        let hub = Hub::with_config(Model::new(), HubConfig::with_seed(42));
+
+        // Generate sequences from multiple cores at the same tick
+        let sequences: Vec<Vec<u64>> = (0..4)
+            .map(|core| {
+                let mut rng = hub.create_core_rng(core, 10);
+                (0..5).map(|_| rng.next_u64()).collect()
+            })
+            .collect();
+
+        // All cores should have different sequences
+        for i in 0..sequences.len() {
+            for j in (i + 1)..sequences.len() {
+                assert_ne!(
+                    sequences[i], sequences[j],
+                    "Core {} and {} should have different RNG sequences",
+                    i, j
+                );
+            }
+        }
+    }
+
+    /// Test: Replay produces identical results
+    ///
+    /// Re-running the same core at the same tick should produce the same
+    /// RNG sequence, enabling deterministic replay.
+    #[test]
+    fn test_replay_produces_identical_results() {
+        let hub = Hub::with_config(Model::new(), HubConfig::with_seed(99999));
+
+        // First run
+        let first_run: Vec<u64> = {
+            let mut rng = hub.create_core_rng(3, 42);
+            (0..100).map(|_| rng.next_u64()).collect()
+        };
+
+        // Replay (same core, same tick)
+        let replay: Vec<u64> = {
+            let mut rng = hub.create_core_rng(3, 42);
+            (0..100).map(|_| rng.next_u64()).collect()
+        };
+
+        assert_eq!(first_run, replay, "Replay should produce identical results");
+    }
+
+    /// Test: Works with any number of cores
+    ///
+    /// The determinism should hold regardless of how many cores are configured.
+    #[test]
+    fn test_works_with_any_core_count() {
+        let seed = 77777;
+
+        // Test with various core counts
+        for core_count in [1, 2, 4, 8, 16, 100] {
+            let config = HubConfig::new(core_count, seed);
+            let hub = Hub::with_config(Model::new(), config);
+
+            // Actual core count after clamping
+            let actual_core_count = hub.core_count();
+
+            // Each core should get unique, deterministic values
+            let values: Vec<u64> = (0..actual_core_count)
+                .map(|core| {
+                    let mut rng = hub.create_core_rng(core, 0);
+                    rng.next_u64()
+                })
+                .collect();
+
+            // All values should be unique
+            let unique: std::collections::HashSet<_> = values.iter().collect();
+            assert_eq!(
+                unique.len(),
+                actual_core_count,
+                "All cores should get unique RNG values (configured={}, actual={})",
+                core_count,
+                actual_core_count
+            );
+        }
+    }
+
+    /// Test: RNG distribution quality check
+    ///
+    /// Verify that the generated random numbers have reasonable distribution.
+    #[test]
+    fn test_rng_distribution_quality() {
+        let hub = Hub::with_config(Model::new(), HubConfig::with_seed(12345));
+
+        let mut values = Vec::new();
+        for tick in 0..100 {
+            for core in 0..10 {
+                let mut rng = hub.create_core_rng(core, tick);
+                values.push(rng.next_f64());
+            }
+        }
+
+        // Check that values are in [0, 1)
+        assert!(values.iter().all(|&v| (0.0..1.0).contains(&v)));
+
+        // Check basic distribution (should be roughly uniform)
+        let mean: f64 = values.iter().sum::<f64>() / values.len() as f64;
+        assert!(
+            (0.4..0.6).contains(&mean),
+            "Mean should be close to 0.5, got {}",
+            mean
+        );
+
+        // Check that we don't have too many duplicates
+        let unique: std::collections::HashSet<u64> = values.iter().map(|v| v.to_bits()).collect();
+        assert!(
+            unique.len() > values.len() * 9 / 10,
+            "Should have mostly unique values"
+        );
+    }
+
+    /// Test: Tick handler with random effects produces deterministic results
+    #[test]
+    fn test_tick_handler_with_random_deterministic() {
+        fn run_random_simulation(seed: u64) -> f64 {
+            let mut group = TickSyncGroup::single(GroupId(0), seed);
+
+            // Register a tick handler that uses random values
+            group.on_tick(TickHandler {
+                id: DefId::new("random_modifier"),
+                condition: None,
+                target_kind: None,
+                effects: vec![Effect::ModifyGlobal {
+                    property: "value".to_string(),
+                    op: pulsive_core::effect::ModifyOp::Add,
+                    // This adds a random value each tick
+                    value: Expr::Random,
+                }],
+                priority: 0,
+            });
+
+            let mut hub = Hub::with_model(Model::new());
+            hub.model_mut().set_global("value", 0.0f64);
+            hub.set_global_seed(seed);
+            hub.add_group(group);
+
+            // Run 10 ticks
+            for _ in 0..10 {
+                hub.tick().unwrap();
+            }
+
+            hub.model()
+                .get_global("value")
+                .and_then(|v| v.as_float())
+                .unwrap()
+        }
+
+        // Same seed should produce same result
+        let result1 = run_random_simulation(12345);
+        let result2 = run_random_simulation(12345);
+        assert_eq!(
+            result1, result2,
+            "Same seed should produce same random results"
+        );
+
+        // Different seed should produce different result
+        let result3 = run_random_simulation(54321);
+        assert_ne!(
+            result1, result3,
+            "Different seed should produce different results"
+        );
     }
 }

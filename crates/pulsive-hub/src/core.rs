@@ -9,7 +9,17 @@
 //! pulsive-core does NOT know about pulsive-hub. This wrapper simply
 //! provides a convenient way for CoreGroup to manage multiple Runtime+Model
 //! pairs. All actual simulation logic lives in pulsive-core.
+//!
+//! # Deterministic RNG
+//!
+//! Each core gets a deterministic RNG derived from:
+//! - Base seed (from group configuration)
+//! - Core ID (unique within the group)
+//! - Current tick (simulation time)
+//!
+//! This ensures reproducible results regardless of execution order.
 
+use crate::config::hash_seed;
 use pulsive_core::{Model, Rng, Runtime, UpdateResult};
 use serde::{Deserialize, Serialize};
 
@@ -98,19 +108,7 @@ impl Core {
     }
 }
 
-/// Hash function for deterministic RNG seeding
-///
-/// Combines base_seed, core_id, and tick to produce unique per-core-per-tick seeds
-fn hash_seed(base_seed: u64, core_id: u64, tick: u64) -> u64 {
-    // Simple but effective mixing function
-    let mut h = base_seed;
-    h = h.wrapping_mul(0x517cc1b727220a95);
-    h ^= core_id;
-    h = h.wrapping_mul(0x517cc1b727220a95);
-    h ^= tick;
-    h = h.wrapping_mul(0x517cc1b727220a95);
-    h
-}
+// Note: hash_seed is imported from crate::config
 
 impl std::fmt::Debug for Core {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

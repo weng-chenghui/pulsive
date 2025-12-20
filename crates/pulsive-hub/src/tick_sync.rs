@@ -4,7 +4,17 @@
 //! - All cores process the same tick
 //! - Barrier synchronization ensures all complete before advancing
 //! - Single-core mode has zero parallel overhead
+//!
+//! # Deterministic RNG
+//!
+//! Each core in the group gets a deterministic RNG derived from:
+//! - `base_seed`: The group's seed
+//! - `core_id`: The core's index within the group
+//! - `tick`: The current simulation tick
+//!
+//! This ensures reproducible results when replaying simulations.
 
+use crate::config::hash_seed;
 use crate::core::{Core, CoreId};
 use crate::group::{CoreGroup, GroupId};
 use pulsive_core::{Model, Runtime, UpdateResult};
@@ -141,16 +151,7 @@ impl CoreGroup for TickSyncGroup {
     }
 }
 
-/// Hash function for deterministic RNG seeding
-fn hash_seed(base_seed: u64, core_id: u64, tick: u64) -> u64 {
-    let mut h = base_seed;
-    h = h.wrapping_mul(0x517cc1b727220a95);
-    h ^= core_id;
-    h = h.wrapping_mul(0x517cc1b727220a95);
-    h ^= tick;
-    h = h.wrapping_mul(0x517cc1b727220a95);
-    h
-}
+// Note: hash_seed is imported from crate::config
 
 impl std::fmt::Debug for TickSyncGroup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
