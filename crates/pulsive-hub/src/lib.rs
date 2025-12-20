@@ -40,7 +40,7 @@ mod snapshot;
 mod tick_sync;
 
 pub use commit::{apply, apply_batch, commit, commit_batch, has_conflicts, CommitResult};
-pub use config::{max_cores, HubConfig};
+pub use config::{hash_seed, max_cores, HubConfig, DEFAULT_GLOBAL_SEED};
 pub use conflict::{
     default_conflict_filter, detect_conflicts, detect_conflicts_filtered, resolve_conflicts,
     Conflict, ConflictReport, ConflictResolver, ConflictTarget, ConflictType, ResolutionResult,
