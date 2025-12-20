@@ -231,6 +231,13 @@ impl Hub {
     /// 3. Merge results back to global model
     /// 4. Advance version
     ///
+    /// # Note
+    ///
+    /// The `core_count` configuration is stored for future parallel execution.
+    /// Currently, this method executes all groups sequentially regardless of
+    /// the configured core count. When parallel execution is implemented,
+    /// `core_count` will control worker thread allocation.
+    ///
     /// # Example
     ///
     /// ```
@@ -450,57 +457,55 @@ mod tests {
 
     #[test]
     fn test_deterministic_regardless_of_core_count() {
-        // Run simulation in single-core mode
-        let mut hub1 = Hub::with_default_group(Model::new(), 12345);
-        hub1.model_mut().set_global("count", 0.0f64);
+        // Helper to create a tick handler that increments a counter
+        fn counter_handler() -> TickHandler {
+            TickHandler {
+                id: DefId::new("counter"),
+                condition: None,
+                target_kind: None,
+                effects: vec![Effect::ModifyGlobal {
+                    property: "count".to_string(),
+                    op: pulsive_core::effect::ModifyOp::Add,
+                    value: Expr::lit(1.0),
+                }],
+                priority: 0,
+            }
+        }
 
+        // Run simulation in single-core mode (core_count = 1)
         let mut group1 = TickSyncGroup::single(GroupId(0), 12345);
-        group1.on_tick(TickHandler {
-            id: DefId::new("counter"),
-            condition: None,
-            target_kind: None,
-            effects: vec![Effect::ModifyGlobal {
-                property: "count".to_string(),
-                op: pulsive_core::effect::ModifyOp::Add,
-                value: Expr::lit(1.0),
-            }],
-            priority: 0,
-        });
+        group1.on_tick(counter_handler());
+
         let mut hub1 = Hub::with_model(Model::new());
         hub1.model_mut().set_global("count", 0.0f64);
         hub1.add_group(group1);
+        assert_eq!(hub1.core_count(), 1); // Verify single-core mode
 
         for _ in 0..5 {
             hub1.tick().unwrap();
         }
         let count1 = hub1.model().get_global("count").and_then(|v| v.as_float());
 
-        // Run same simulation with different core count configuration
-        // (actual parallel execution isn't different here since TickSyncGroup
-        // handles its own core count, but the dispatch path is exercised)
+        // Run same simulation with different core count configuration.
+        // Note: The core_count setting is stored for future parallel execution.
+        // Currently both paths execute identically since parallel dispatch
+        // is not yet implemented - this test verifies determinism is preserved
+        // when the setting changes.
         let mut group2 = TickSyncGroup::single(GroupId(0), 12345);
-        group2.on_tick(TickHandler {
-            id: DefId::new("counter"),
-            condition: None,
-            target_kind: None,
-            effects: vec![Effect::ModifyGlobal {
-                property: "count".to_string(),
-                op: pulsive_core::effect::ModifyOp::Add,
-                value: Expr::lit(1.0),
-            }],
-            priority: 0,
-        });
+        group2.on_tick(counter_handler());
+
         let mut hub2 = Hub::with_model(Model::new());
         hub2.model_mut().set_global("count", 0.0f64);
         hub2.add_group(group2);
-        hub2.set_core_count(4); // Enable parallel mode
+        hub2.set_core_count(4); // Set for future parallel mode
+        assert!(hub2.core_count() > 1 || max_cores() == 1);
 
         for _ in 0..5 {
             hub2.tick().unwrap();
         }
         let count2 = hub2.model().get_global("count").and_then(|v| v.as_float());
 
-        // Results should be deterministic regardless of core count
+        // Results should be deterministic regardless of core count setting
         assert_eq!(count1, count2);
         assert_eq!(count1, Some(5.0));
     }
