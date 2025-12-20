@@ -22,10 +22,13 @@ use serde::{Deserialize, Serialize};
 /// let config = HubConfig::default();
 /// assert!(config.is_single_core());
 ///
-/// // Configure for 4 cores
+/// // Configure for 4 cores (clamped to available cores)
 /// let config = HubConfig::with_core_count(4);
-/// assert!(!config.is_single_core());
-/// assert_eq!(config.core_count(), 4);
+/// assert_eq!(config.core_count(), 4.min(pulsive_hub::max_cores()));
+/// // Not single-core if we have at least 2 cores available
+/// if pulsive_hub::max_cores() >= 2 {
+///     assert!(!config.is_single_core());
+/// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubConfig {

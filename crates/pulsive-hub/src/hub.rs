@@ -45,8 +45,8 @@ pub struct TickResult {
 ///
 /// let mut hub = Hub::new();
 ///
-/// // Default is single-core
-/// assert!(hub.is_single_core());
+/// // Default is single-core (core_count == 1)
+/// assert_eq!(hub.core_count(), 1);
 ///
 /// // Configure for 4 cores (for future parallel execution)
 /// hub.set_core_count(4);
@@ -54,7 +54,7 @@ pub struct TickResult {
 ///
 /// // Can change between ticks
 /// hub.set_core_count(1);
-/// assert!(hub.is_single_core());
+/// assert_eq!(hub.core_count(), 1);
 /// ```
 pub struct Hub {
     /// The global model (source of truth)
@@ -165,26 +165,10 @@ impl Hub {
     ///
     /// // Can change between ticks
     /// hub.set_core_count(1);
-    /// assert!(hub.is_single_core());
+    /// assert_eq!(hub.core_count(), 1);
     /// ```
     pub fn set_core_count(&mut self, n: usize) {
         self.config.set_core_count(n);
-    }
-
-    /// Check if configured for single-core mode
-    ///
-    /// Returns true when `core_count == 1`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use pulsive_hub::Hub;
-    ///
-    /// let hub = Hub::new();
-    /// assert!(hub.is_single_core()); // Default is single-core
-    /// ```
-    pub fn is_single_core(&self) -> bool {
-        self.config.is_single_core()
     }
 
     /// Get current core count
@@ -395,7 +379,6 @@ mod tests {
     #[test]
     fn test_default_is_single_core() {
         let hub = Hub::new();
-        assert!(hub.is_single_core());
         assert_eq!(hub.core_count(), 1);
     }
 
@@ -409,7 +392,7 @@ mod tests {
     #[test]
     fn test_set_core_count() {
         let mut hub = Hub::new();
-        assert!(hub.is_single_core());
+        assert_eq!(hub.core_count(), 1);
 
         hub.set_core_count(4);
         let expected = 4.min(max_cores());
@@ -417,7 +400,7 @@ mod tests {
 
         // Set back to single core
         hub.set_core_count(1);
-        assert!(hub.is_single_core());
+        assert_eq!(hub.core_count(), 1);
     }
 
     #[test]
@@ -433,7 +416,6 @@ mod tests {
         hub.set_core_count(0);
         // 0 should be clamped to 1
         assert_eq!(hub.core_count(), 1);
-        assert!(hub.is_single_core());
     }
 
     #[test]
@@ -449,7 +431,7 @@ mod tests {
         let mut hub = Hub::with_default_group(Model::new(), 12345);
 
         // Start in single-core mode
-        assert!(hub.is_single_core());
+        assert_eq!(hub.core_count(), 1);
         hub.tick().unwrap();
 
         // Switch to parallel mode
@@ -459,7 +441,7 @@ mod tests {
 
         // Switch back to single-core
         hub.set_core_count(1);
-        assert!(hub.is_single_core());
+        assert_eq!(hub.core_count(), 1);
         hub.tick().unwrap();
 
         // Verify ticks advanced correctly
@@ -528,7 +510,7 @@ mod tests {
         let mut hub = Hub::new();
 
         // Test config accessor
-        assert!(hub.config().is_single_core());
+        assert_eq!(hub.config().core_count(), 1);
 
         // Test mutable config accessor
         hub.config_mut().set_core_count(2);
